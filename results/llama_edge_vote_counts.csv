@@ -1,0 +1,131 @@
+Var1,Var2,Votes,Expert
+Depression,PEG,8,TRUE
+Alcohol,Sleep disturbance,8,TRUE
+Education,Alcohol,7,TRUE
+Age,Obesity,7,TRUE
+Age,Sleep disturbance,7,TRUE
+Anxiety,PEG,7,TRUE
+Education,PEG,7,TRUE
+Anxiety,Alcohol,7,TRUE
+Catastrophizing,Anxiety,7,TRUE
+Fear_avoidance,Anxiety,7,TRUE
+Obesity,Anxiety,7,TRUE
+Depression,CCI,7,TRUE
+Obesity,CCI,7,TRUE
+Financial_level,Depression,7,TRUE
+Education,Smoking,7,TRUE
+Education,Anxiety,6,TRUE
+Sex,Anxiety,6,TRUE
+Age,Alcohol,6,TRUE
+Age,CCI,6,TRUE
+Age,Fear_avoidance,6,TRUE
+Catastrophizing,PEG,6,TRUE
+Fear_avoidance,PEG,6,TRUE
+Financial_level,PEG,6,TRUE
+Obesity,PEG,6,TRUE
+Sleep disturbance,PEG,6,TRUE
+Smoking,PEG,6,TRUE
+Financial_level,Sleep disturbance,6,TRUE
+Alcohol,Obesity,6,TRUE
+Education,Obesity,6,TRUE
+Sex,Obesity,5,TRUE
+Sex,PEG,5,TRUE
+Sex,Smoking,5,TRUE
+Age,Anxiety,5,TRUE
+Age,Depression,5,TRUE
+Age,PEG,5,TRUE
+Age,Smoking,5,TRUE
+Education,CCI,5,TRUE
+Anxiety,CCI,5,TRUE
+Obesity,Depression,5,TRUE
+Education,Depression,5,TRUE
+Fear_avoidance,Depression,5,TRUE
+Financial_level,Anxiety,4,TRUE
+Sex,CCI,4,TRUE
+Sex,Depression,4,TRUE
+Sex,Education,4,TRUE
+Sex,Sleep disturbance,4,TRUE
+Age,Financial_level,4,TRUE
+Education,Financial_level,4,TRUE
+Sex,Catastrophizing,4,TRUE
+Sleep disturbance,CCI,4,TRUE
+Age,Catastrophizing,3,TRUE
+Depression,Alcohol,3,TRUE
+Sex,Alcohol,3,TRUE
+Sex,Fear_avoidance,3,TRUE
+Sex,Financial_level,2,TRUE
+Alcohol,CCI,2,TRUE
+Financial_level,Obesity,2,TRUE
+Depression,Smoking,2,TRUE
+Sleep disturbance,Depression,2,TRUE
+Alcohol,Financial_level,1,TRUE
+Catastrophizing,Depression,1,TRUE
+Anxiety,Sleep disturbance,1,TRUE
+Anxiety,Smoking,1,TRUE
+Sleep disturbance,Smoking,0,TRUE
+Smoking,Sleep disturbance,9,FALSE
+Depression,Anxiety,8,FALSE
+Depression,Sleep disturbance,7,FALSE
+Sleep disturbance,Anxiety,7,FALSE
+CCI,PEG,7,FALSE
+Depression,Catastrophizing,7,FALSE
+Smoking,Obesity,7,FALSE
+Age,Education,6,FALSE
+Smoking,Anxiety,6,FALSE
+Smoking,CCI,6,FALSE
+Smoking,Depression,6,FALSE
+Obesity,Sleep disturbance,6,FALSE
+Smoking,Financial_level,6,FALSE
+CCI,Alcohol,5,FALSE
+Alcohol,Depression,5,FALSE
+Financial_level,CCI,5,FALSE
+Financial_level,Catastrophizing,5,FALSE
+Smoking,Catastrophizing,5,FALSE
+Financial_level,Fear_avoidance,5,FALSE
+Smoking,Fear_avoidance,5,FALSE
+Alcohol,PEG,5,FALSE
+Catastrophizing,Alcohol,4,FALSE
+Fear_avoidance,Alcohol,4,FALSE
+Alcohol,Smoking,4,FALSE
+Catastrophizing,CCI,4,FALSE
+Catastrophizing,Sleep disturbance,4,FALSE
+Education,Sleep disturbance,4,FALSE
+CCI,Fear_avoidance,4,FALSE
+Fear_avoidance,Obesity,4,FALSE
+Financial_level,Alcohol,4,FALSE
+Smoking,Alcohol,4,FALSE
+Obesity,Catastrophizing,4,FALSE
+Anxiety,Financial_level,4,FALSE
+Obesity,Fear_avoidance,3,FALSE
+CCI,Sleep disturbance,3,FALSE
+Fear_avoidance,Catastrophizing,3,FALSE
+Depression,Obesity,3,FALSE
+Sleep disturbance,Fear_avoidance,3,FALSE
+Obesity,Financial_level,3,FALSE
+Catastrophizing,Fear_avoidance,3,FALSE
+Education,Fear_avoidance,3,FALSE
+Financial_level,Education,3,FALSE
+Fear_avoidance,Sleep disturbance,3,FALSE
+Obesity,Alcohol,2,FALSE
+CCI,Anxiety,2,FALSE
+Catastrophizing,Obesity,2,FALSE
+Depression,Education,2,FALSE
+Depression,Fear_avoidance,2,FALSE
+Financial_level,Smoking,2,FALSE
+Sleep disturbance,Catastrophizing,2,FALSE
+Sleep disturbance,Financial_level,2,FALSE
+Anxiety,Catastrophizing,2,FALSE
+CCI,Financial_level,2,FALSE
+Education,Catastrophizing,2,FALSE
+Catastrophizing,Education,1,FALSE
+Fear_avoidance,CCI,1,FALSE
+Fear_avoidance,Education,1,FALSE
+Obesity,Education,1,FALSE
+Alcohol,Anxiety,1,FALSE
+Alcohol,Catastrophizing,1,FALSE
+Alcohol,Fear_avoidance,1,FALSE
+Depression,Financial_level,1,FALSE
+Anxiety,Obesity,1,FALSE
+CCI,Depression,1,FALSE
+CCI,Catastrophizing,1,FALSE
+Sleep disturbance,Obesity,1,FALSE

@@ -1,0 +1,13 @@
+System,Metric,HD,SHD
+LLM,Plausibility,73,79
+LLM,Association,71,76
+LLM,Temporality,57,62
+LLM,Direct Causal,60,66
+RAG,Plausibility,71,76
+RAG,Association,50,56
+RAG,Temporality,35,37
+RAG,Direct Causal,54,60
+KG-RAG,Plausibility,72,79
+KG-RAG,Association,50,54
+KG-RAG,Temporality,18,19
+KG-RAG,Direct Causal,53,57

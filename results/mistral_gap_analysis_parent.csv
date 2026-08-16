@@ -1,0 +1,14 @@
+from,total_tp,total_fp,total_fn,tpr,fdr
+Age,54,5,45,0.545,0.085
+Alcohol,16,18,20,0.444,0.529
+Anxiety,19,12,26,0.422,0.387
+CCI,0,23,0,NA,1
+Catastrophizing,14,17,13,0.519,0.548
+Depression,10,17,26,0.278,0.63
+Education,44,10,28,0.611,0.185
+Fear avoidance,10,14,17,0.37,0.583
+Financial level,20,15,25,0.444,0.429
+Obesity,16,21,20,0.444,0.568
+Sex,50,0,58,0.463,0
+Sleep disturbance,15,14,21,0.417,0.483
+Smoking,5,40,4,0.556,0.889

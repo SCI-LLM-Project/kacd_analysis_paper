@@ -1,0 +1,146 @@
+---
+title: "results_section"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Libraries and functions
+```{r}
+library(tidyvers)
+library(bnlearn)
+source("analysis_helper_functions.R")
+```
+
+# Read data
+
+```{r}
+bh_df<-read_sas("data/BH Vanguard causal analysis dataset/data.sas7bdat", 
+                "data/BH Vanguard causal analysis dataset/formats.sas7bcat")
+```
+
+# Expert DAG
+
+```{r}
+## Construct the expert dag based on the paper (https://www.sciencedirect.com/science/article/pii/S1529943025000208?via%3Dihub#sec0012)
+
+expert_graph_pairs<-c(
+  "Age" , "CCI",
+  "Age" , "Obesity",
+  "Age" , "Anxiety",
+  "Age" , "Depression",
+  "Age" , "Sleep disturbance",
+  "Age" , "Financial_level",
+  "Age" , "Smoking",
+  "Age" , "Catastrophizing",
+  "Age" , "Fear_avoidance",
+  "Age" , "Alcohol",
+  "Age" , "PEG",
+  "Alcohol" , "Obesity",
+  "Alcohol" , "CCI",
+  "Alcohol" , "Financial_level",
+  "Alcohol" , "Sleep disturbance",
+  "Anxiety" , "CCI",
+  "Anxiety" , "Smoking",
+  "Anxiety" , "PEG",
+  "Anxiety" , "Sleep disturbance",
+  "Anxiety" , "Alcohol",
+  "Catastrophizing" , "Anxiety",
+  "Catastrophizing" , "Depression",
+  "Catastrophizing" , "PEG",
+  "Depression" , "CCI",
+  "Depression" , "Smoking",
+  "Depression" , "PEG",
+  "Depression" , "Alcohol",
+  "Education" , "CCI",
+  "Education" , "Obesity",
+  "Education" , "Anxiety",
+  "Education" , "Depression",
+  "Education" , "Financial_level",
+  "Education" , "Smoking",
+  "Education" , "PEG",
+  "Education" , "Alcohol",
+  "Fear_avoidance" , "Anxiety",
+  "Fear_avoidance" , "Depression",
+  "Fear_avoidance" , "PEG",
+  "Financial_level" , "Obesity",
+  "Financial_level" , "Anxiety",
+  "Financial_level" , "Depression",
+  "Financial_level" , "Sleep disturbance",
+  "Financial_level" , "PEG",
+  "Obesity" , "CCI",
+  "Obesity" , "Anxiety",
+  "Obesity" , "Depression",
+  "Obesity" , "PEG",
+  "Sex" , "CCI",
+  "Sex" , "Obesity",
+  "Sex" , "Anxiety",
+  "Sex" , "Depression",
+  "Sex" , "Sleep disturbance",
+  "Sex" , "Education",
+  "Sex" , "Financial_level",
+  "Sex" , "Smoking",
+  "Sex" , "Catastrophizing",
+  "Sex" , "Fear_avoidance",
+  "Sex" , "PEG",
+  "Sex" , "Alcohol",
+  "Sleep disturbance" , "CCI",
+  "Sleep disturbance" , "Depression",
+  "Sleep disturbance" , "Smoking",
+  "Sleep disturbance" , "PEG",
+  "Smoking" , "PEG"
+)
+
+expert_df<-matrix(expert_graph_pairs, byrow = TRUE, ncol=2)
+expert_dag<-empty.graph(unique(c(expert_df[,1], expert_df[,2])))
+arcs(expert_dag, check.cycles = FALSE)<-expert_df
+
+plot(expert_dag)
+```
+
+# Variable selection and edge constraints
+
+```{r}
+## Variable mapping
+var_mapping<-data.frame(node_name = unique(c(expert_dag.set[,1], expert_dag.set[,2])), 
+                        var_name = c("SEX", "BMICAT", "PROMIS_ANXIETY_TSCORE", "PROMIS_DEPRESSION_TSCORE",
+                                      "PROMIS_SLEEP_DISTURBANCE_TSCORE", "EDUCATION", "FINANCIAL_STRAIN_CLASS", "CIGARETTES",
+                                      "PAIN_CATASTROPHIZING_SCALE","FEAR_AVOIDANCE_SCORE", "AGE","ALCOHOL","CCI","PEG"))
+var_mapping
+```
+
+```{r}
+# Variable selection from dataset
+dag_bh_df<-bh_df%>%select(all_of(var_mapping$var_name))
+dag_bh_df<-dag_bh_df%>%
+  mutate(across(where(is.labelled), as_factor))%>%
+  filter(complete.cases(.))%>%
+  as.data.frame(.,droplevels = TRUE)%>%
+  droplevels(.)
+
+colnames(dag_bh_df)<-var_mapping$node_name
+
+## form blacklist for edges from PEG
+black_list_PEG<-expand.grid("PEG", colnames(dag_bh_df))
+colnames(black_list_PEG)<-c("from", "to")
+
+## blacklist for edges to Age and Sex
+black_list_bio<-expand.grid(colnames(dag_bh_df), c("Age", "Sex"))
+colnames(black_list_bio)<-c("from", "to")
+
+black_list<-rbind(black_list_PEG, black_list_bio)
+```
+
+# Hill Climb
+
+```{r}
+hc_boost<-boot.strength(dag_bh_df,algorithm = "hc", R = 500,
+                             algorithm.args = list("blacklist"=black_list,
+                                                   score = "custom", fun = glm.bic))
+
+hc_boost
+saveRDS(hc_boost, "data/hc_naive_boost_500_glmBIC.Rds")
+write.csv(hc_boost, "data/hc_naive_boost_500_glmBIC.csv", row.names = FALSE)
+```

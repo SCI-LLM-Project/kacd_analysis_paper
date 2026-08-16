@@ -1,0 +1,2148 @@
+---
+title: "KACD analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Setup
+## Libraries
+
+```{r load-libraries}
+library(tidyverse)
+library(DT)
+library(bnlearn)
+library(Rgraphviz)
+library(patchwork)
+
+source("analysis_helper_functions.R")
+```
+
+## Read initial data
+
+```{r constants}
+expert_edges <- read_csv("data/expert_edge_pairs.csv")
+initial_edges <- read_csv("data/initial_edges.csv")
+proto_df<-read.csv("data/hc_naive_boost_500_glmBIC.csv")
+proto_boot<-readRDS("data/hc_naive_boost_500_glmBIC.Rds")
+
+node_names <- unique(c(expert_edges[,1]$Var1, expert_edges[,2]$Var2))
+```
+
+# Expert graph adjacency
+
+```{r}
+expert_network <- igraph::graph_from_data_frame(expert_edges, directed = TRUE)
+
+#Convert the graph object to adjacency matrix
+adj_matrix <- igraph::as_adjacency_matrix(expert_network, sparse = FALSE)
+print(adj_matrix)
+
+write.csv(adj_matrix, "results/expert_adj_matrix.csv")
+```
+
+# Random Graphs
+
+```{r}
+# Generate random graphs from the expert dag nodes. The random graphs serve as baseline non informative network structure
+set.seed(1234)
+ran_dag <- random.graph(node_names, num = 100)
+expert_dag <- empty.graph(node_names)
+arcs(expert_dag, check.cycles = FALSE) <- as.matrix(expert_edges[, c("Var1", "Var2")])
+
+# expert_dag is bn 
+# compare expert dag with each of the 100 random and summarize fdr, tpr, f1, and shd
+ran_list <- lapply(ran_dag, function(x){
+  
+  res <- score(expert_edges, as.data.frame(arcs(x)) %>% rename(Var1 = from, Var2 = to), node_names)
+  data.frame(fdr = res$fdr,
+             tpr = res$tpr,
+             f1  = res$f1,
+             hd  = hamming(x, expert_dag),
+             shd = shd(x, expert_dag, cpdag = FALSE))
+  
+})
+
+# build summary dataset for the random graphs
+ran_df <- bind_rows(ran_list)  %>% 
+  summarise(
+    mean_fdr = mean (fdr), sd_fdr = sd(fdr),
+    mean_tpr = mean (tpr), sd_tpr = sd(tpr),
+    mean_f1  = mean (f1),   sd_f1 = sd(f1),
+    mean_hd  = mean (hd),   sd_hd = sd(hd),
+    mean_shd = mean (shd), sd_shd = sd(shd)
+            )
+ran_df
+```
+
+## Moralized
+
+```{r}
+# compare expert dag with each of the 100 random and summarize fdr, tpr, f1, and shd
+ran_list_moral <- lapply(ran_dag, function(x){
+  
+  res <- score(expert_edges, as.data.frame(arcs(moral(x))) %>% rename(Var1 = from, Var2 = to), node_names)
+  
+  data.frame(fdr = res$fdr,
+             tpr = res$tpr,
+             f1  = res$f1,
+             hd  = hamming(x, expert_dag),
+             shd = shd(x, expert_dag, cpdag = FALSE))
+})
+
+
+
+# build summary dataset for the random graphs
+ran_df_moral <- bind_rows(ran_list_moral)  %>% 
+  summarise(
+    mean_fdr = mean (fdr), sd_fdr = sd(fdr),
+    mean_tpr = mean (tpr), sd_tpr = sd(tpr),
+    mean_f1  = mean (f1),  sd_f1  = sd(f1),
+    mean_hd = mean (hd),    sd_hd = sd(hd),
+    mean_shd = mean (shd), sd_shd = sd(shd)
+            )
+ran_df_moral  <-  ran_df_moral  %>%  
+  mutate(typ = "Moralized")
+```
+
+# Proto Model
+
+## Compare HC proto at threshold
+
+```{r}
+proto_df[proto_df=="Sleep"]<-"Sleep disturbance" ## change name to match the node names
+
+hc_thr_res <- list()
+for (i in unique(proto_df$strength)){
+  
+  proto_filtered_df<-proto_df %>%
+    filter(strength >= i, direction > 0) %>% 
+    filter(to != "Sex" & to != "Age" & from != "PEG")
+  names(proto_filtered_df)[c(1, 2)] <- c("Var1", "Var2")
+  
+  proto_df_pred <- proto_filtered_df %>%
+    full_join(proto_filtered_df,
+              by = c("Var1" = "Var2", "Var2" = "Var1"),
+              suffix = c('.fwd', '.rev')) %>% 
+    filter(replace_na(direction.fwd, 0) > replace_na(direction.rev, 0)) %>% 
+    mutate(Proto = TRUE)
+  
+  hc_thr_res[[as.character(i)]] <- score(expert_edges, proto_df_pred, node_names)
+  hc_thr_res[[as.character(i)]]$threshold <- i
+}
+
+hc_thr_res <- hc_thr_res %>% 
+  bind_rows() %>% 
+  mutate(tpr = tp/(tp+fn),
+         fdr = fp/(fp+tp),
+         f1  = 2*tp/(2*tp+fn+fp)) %>% 
+  relocate(threshold)
+
+hc_thr_res  <-  hc_thr_res  %>%  
+  mutate(typ = "Directed")
+```
+
+```{r}
+# filtering for proper strength threshold
+averaged.network(proto_boot)
+
+proto_filtered_df<-proto_df %>%
+    filter(strength>=0.538, direction>0) %>% 
+    filter(to != "Sex" & to != "Age" & from != "PEG")
+names(proto_filtered_df)[c(1, 2)] <- c("Var1", "Var2")
+
+proto_df_pred <- proto_filtered_df %>%
+  full_join(proto_filtered_df,
+              by = c("Var1" = "Var2", "Var2" = "Var1"),
+              suffix = c('.fwd', '.rev')) %>% 
+  filter(replace_na(direction.fwd, 0) > replace_na(direction.rev, 0)) %>% 
+  mutate(Proto = TRUE)
+
+score_proto_df_pred <- score(expert_edges, proto_df_pred, node_names)
+score_proto_df_pred
+```
+
+```{r}
+proto_df_pred
+write_csv(proto_df_pred %>% select(Var1, Var2), "results/proto.csv")
+```
+
+## Moralized
+
+```{r}
+hc_thr_res_moral  <- list()
+for (i in unique(proto_df$strength)){
+
+  proto_filtered_df<-proto_df %>%
+    filter(strength >= i, direction > 0) %>%
+    filter(to != "Sex" & to != "Age" & from != "PEG")
+  names(proto_filtered_df)[c(1, 2)] <- c("Var1", "Var2")
+
+  proto_df_pred <- proto_filtered_df %>%
+    full_join(proto_filtered_df,
+              by = c("Var1" = "Var2", "Var2" = "Var1"),
+              suffix = c('.fwd', '.rev')) %>%
+    filter(replace_na(direction.fwd, 0) > replace_na(direction.rev, 0)) %>%
+    mutate(Proto = TRUE)
+
+  target_dag <- empty.graph(node_names)
+  current_dag <- empty.graph(node_names)
+  
+  target_arcs <- expert_edges
+  current_arcs <- proto_df_pred
+  
+  arcs(target_dag, check.cycles = FALSE) <- as.matrix(target_arcs[, c("Var1", "Var2")])
+  arcs(current_dag, check.cycles = FALSE) <- as.matrix(current_arcs[, c("Var1", "Var2")])
+  cur_dag <- as.data.frame(moral(current_dag)$arcs) %>% mutate(Var1 = from, Var2 = to) %>% select(Var1, Var2)
+  targ_dag <- as.data.frame(moral(target_dag)$arcs) %>% mutate(Var1 = from, Var2 = to) %>% select(Var1, Var2)
+
+  hc_thr_res_moral[[as.character(i)]] <- score(cur_dag, targ_dag, node_names)
+  hc_thr_res_moral[[as.character(i)]]$threshold <- i
+}
+
+hc_thr_res_moral <- hc_thr_res_moral  %>%
+  bind_rows() %>%
+  mutate(tpr = tp/(tp+fn),
+         fdr = fp/(fp+tp),
+         f1  = 2*tp/(2*tp+fn+fp)) %>%
+  relocate(threshold)
+
+hc_thr_res_moral  <-  hc_thr_res_moral  %>%
+  mutate(typ = "Moralized")
+
+
+hc_thr_pdat <- bind_rows(hc_thr_res_moral, hc_thr_res)
+```
+
+## Figure 2
+```{r}
+# ---------------------------
+# Horizontal baseline lines (averages)
+# ---------------------------
+baseline_df <- tibble(
+  typ  = rep(c("Directed", "Moralized"), each = 3),
+  name = rep(c("f1", "fdr", "tpr"), times = 2),
+  mean_value = c(
+    ran_df$mean_f1, ran_df$mean_fdr, ran_df$mean_tpr,
+    ran_df_moral$mean_f1, ran_df_moral$mean_fdr, ran_df_moral$mean_tpr
+  )
+)
+
+# ---------------------------
+# Single vertical reference line
+# ---------------------------
+vline_df <- tibble(
+  threshold = 0.538,
+  ref = "HC optimal threshold"
+)
+
+# ---------------------------
+# Plot
+# ---------------------------
+hc_thr_pdat %>% 
+  select(threshold, fdr, tpr, f1, typ) %>% 
+  pivot_longer(-c(threshold, typ)) %>% 
+  
+  ggplot(aes(x = threshold, y = value, color = name)) +
+
+  # main curves
+  geom_line(linewidth = 1.2) +
+
+  # horizontal average baselines (same color as metrics)
+  geom_hline(
+    data = baseline_df,
+    aes(
+      yintercept = mean_value,
+      color     = name,
+      linetype  = "Metric mean (random graphs)"
+    ),
+    linewidth = 0.8
+  ) +
+
+  # single vertical threshold (WITH legend)
+  geom_vline(
+    data = vline_df,
+    aes(
+      xintercept = threshold,
+      linetype   = ref),
+      color = "orange",
+    linewidth = 0.9
+  ) +
+
+  # facets
+  facet_wrap(
+    ~ typ,
+    scales = "free_y",
+    nrow = 1
+  ) +
+
+  # metric colors
+  scale_color_manual(
+    name   = "Metric",
+    values = c(
+      "f1"  = "#F8666D",
+      "fdr" = "#01cb88",
+      "tpr" = "#619eFF"
+    ),
+    labels = c("F1-score", "FDR", "TPR")
+  ) +
+
+  # reference-line legend
+  scale_linetype_manual(
+    name   = "Reference lines",
+    values = c(
+      "Metric mean (random graphs)"  = "dashed",
+      "HC optimal threshold" = "dashed"
+    )
+  ) +
+
+  # axes & labels
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(
+    x = "Threshold",
+    y = "Metric value"
+  ) +
+
+  # legend order
+  guides(
+    color    = guide_legend(order = 1),
+    linetype = guide_legend(order = 2)
+  ) +
+
+  # theme
+  theme_classic(base_size = 12) +
+  theme(
+    legend.position = "bottom",     
+    legend.direction = "horizontal",
+    legend.title    = element_text(size = 14, face = "bold"),
+    legend.text     = element_text(size = 14),
+    axis.title.x    = element_text(size = 16, face = "bold"),
+    axis.title.y    = element_text(size = 16, face = "bold"),
+    axis.text       = element_text(size = 14),
+    strip.text      = element_text(size = 16, face = "bold"),
+    strip.background = element_rect(fill = "grey90", color = "grey40"),
+    panel.spacing = unit(2, "lines")
+  )
+
+ggsave("results/figures/figure 2.png")
+```
+
+
+# Knowledge Systems mistral
+## Load data
+
+```{r}
+# Unresolved
+full_results <- read_csv("data/mistral/results_undirected_combined.csv") %>% select(-contains("...1"))
+
+# resolved
+kg_llm_plausibility_resolved <- read_csv("data/mistral/directional_resolved_without_proto/kg_llm_plausibility_without_proto_resolved.csv")
+kg_llm_association_resolved <- read_csv("data/mistral/directional_resolved_without_proto/kg_llm_association_without_proto_resolved.csv")
+kg_llm_temporality_resolved <- read_csv("data/mistral/directional_resolved_without_proto/kg_llm_temporality_without_proto_resolved.csv")
+
+kg_llm_plausibility_with_proto_resolved <- read_csv("data/mistral/directional_resolved_with_proto_and_causal_lit/kg_llm_plausibility_with_proto_resolved.csv")
+kg_llm_association_with_proto_resolved <- read_csv("data/mistral/directional_resolved_with_proto_and_causal_lit/kg_llm_association_with_proto_resolved.csv")
+kg_llm_temporality_with_proto_resolved <- read_csv("data/mistral/directional_resolved_with_proto_and_causal_lit/kg_llm_temporality_with_proto_resolved.csv")
+kg_llm_causal_lit_with_proto_resolved <- read_csv("data/mistral/directional_resolved_with_proto_and_causal_lit/kg_llm_causal_lit_with_proto_resolved.csv")
+
+llm_plausibility_resolved <- read_csv("data/mistral/directional_resolved_without_proto/llm_plausibility_without_proto_resolved.csv")
+llm_association_resolved <- read_csv("data/mistral/directional_resolved_without_proto/llm_association_without_proto_resolved.csv")
+llm_temporality_resolved <- read_csv("data/mistral/directional_resolved_without_proto/llm_temporality_without_proto_resolved.csv")
+
+llm_plausibility_with_proto_resolved <- read_csv("data/mistral/directional_resolved_with_proto_and_causal_lit/llm_plausibility_with_proto_resolved.csv")
+llm_association_with_proto_resolved <- read_csv("data/mistral/directional_resolved_with_proto_and_causal_lit/llm_association_with_proto_resolved.csv")
+llm_temporality_with_proto_resolved <- read_csv("data/mistral/directional_resolved_with_proto_and_causal_lit/llm_temporality_with_proto_resolved.csv")
+llm_causal_lit_with_proto_resolved <- read_csv("data/mistral/directional_resolved_with_proto_and_causal_lit/llm_causal_lit_with_proto_resolved.csv")
+
+rag_plausibility_resolved <- read_csv("data/mistral/directional_resolved_without_proto/rag_plausibility_without_proto_resolved.csv")
+rag_association_resolved <- read_csv("data/mistral/directional_resolved_without_proto/rag_association_without_proto_resolved.csv")
+rag_temporality_resolved <- read_csv("data/mistral/directional_resolved_without_proto/rag_temporality_without_proto_resolved.csv")
+
+rag_plausibility_with_proto_resolved <- read_csv("data/mistral/directional_resolved_with_proto_and_causal_lit/rag_plausibility_with_proto_resolved.csv")
+rag_association_with_proto_resolved <- read_csv("data/mistral/directional_resolved_with_proto_and_causal_lit/rag_association_with_proto_resolved.csv")
+rag_temporality_with_proto_resolved <- read_csv("data/mistral/directional_resolved_with_proto_and_causal_lit/rag_temporality_with_proto_resolved.csv")
+rag_causal_lit_with_proto_resolved <- read_csv("data/mistral/directional_resolved_with_proto_and_causal_lit/rag_causal_lit_with_proto_resolved.csv")
+```
+
+## Unresolved Directional Predictions
+### Preprocessing
+```{r}
+kg_llm_full <- full_results %>% 
+  filter(context == "kg+llm_full.csv")
+
+llm_full <- full_results %>% 
+  filter(context == "llm_full.csv")
+
+rag_full <- full_results %>% 
+  filter(context == "rag_full.csv")
+
+cat("Data filtered by context:/n")
+cat("kg+llm_full:", nrow(kg_llm_full), "rows/n")
+cat("llm_full:", nrow(llm_full), "rows/n")
+cat("rag_full:", nrow(rag_full), "rows/n")
+
+kg_llm_pred <- kg_llm_full %>% 
+  select("Var1", "Var2", "Plausibility", "Association", "Temporality", `Causal Literature Prediction`)
+llm_full_pred <- llm_full %>% 
+  select("Var1", "Var2", "Plausibility", "Association", "Temporality", `Causal Literature Prediction`)
+rag_full_pred <- rag_full %>% 
+  select("Var1", "Var2", "Plausibility", "Association", "Temporality", `Causal Literature Prediction`)
+```
+
+### Performance by Metric
+
+```{r}
+# Create performance table for each system and metric
+systems <- list(llm_full_pred, rag_full_pred, kg_llm_pred)
+system_names <- c("LLM", "RAG", "KG-RAG")
+metrics <- c("Plausibility", "Association", "Temporality", "Causal Literature Prediction")
+metric_names <- c("Plausibility", "Association", "Temporality", "Direct Causal")
+
+performance_results <- data.frame()
+
+for (i in 1:length(systems)) {
+  for (j in 1:length(metrics)) {
+    # Filter edges where metric is TRUE
+    filtered <- systems[[i]] %>% filter(.data[[metrics[j]]] == TRUE)
+
+    # Calculate performance scores
+    perf <- score(expert_edges, filtered, node_names, arcs = FALSE)
+
+    result_row <- data.frame(
+      System = system_names[i],
+      Metric = metric_names[j],
+      TPR = perf$tpr,
+      FDR = perf$fdr,
+      F1 = perf$f1,
+      HD = perf$hd,
+      SHD = perf$shd,
+      check.names = FALSE
+    )
+    performance_results <- rbind(performance_results, result_row)
+  }
+}
+
+DT::datatable(performance_results,
+              rownames = FALSE,
+              caption = "Knowledge System Performance by Metric",
+              options = list(pageLength = 12, scrollX = TRUE)) %>%
+  DT::formatRound(columns = c('TPR', 'FDR', 'F1'), digits = 3)
+
+write_csv(performance_results, "results/mistral_knowledge_system_performance_unresolved.csv")
+```
+
+## Direction-Resolved Predictions
+
+```{r}
+# Calculate scores for all resolved dataframes
+score_kg_llm_p_resolved <- score(expert_edges, kg_llm_plausibility_resolved, node_names)
+score_kg_llm_a_resolved <- score(expert_edges, kg_llm_association_resolved, node_names)
+score_kg_llm_t_resolved <- score(expert_edges, kg_llm_temporality_resolved, node_names)
+
+score_llm_p_resolved <- score(expert_edges, llm_plausibility_resolved, node_names)
+score_llm_a_resolved <- score(expert_edges, llm_association_resolved, node_names)
+score_llm_t_resolved <- score(expert_edges, llm_temporality_resolved, node_names)
+
+score_rag_p_resolved <- score(expert_edges, rag_plausibility_resolved, node_names)
+score_rag_a_resolved <- score(expert_edges, rag_association_resolved, node_names)
+score_rag_t_resolved <- score(expert_edges, rag_temporality_resolved, node_names)
+
+# Create comparison table for resolved edges
+resolved_comparison <- data.frame(
+  System = c(
+    "LLM", "LLM", "LLM",
+    "RAG", "RAG", "RAG",
+    "KG-RAG", "KG-RAG", "KG-RAG"
+  ),
+  Metric = c(
+    "Plausibility", "Association", "Temporality",
+    "Plausibility", "Association", "Temporality",
+    "Plausibility", "Association", "Temporality"
+  ),
+  TPR = c(
+    score_llm_p_resolved$tpr, score_llm_a_resolved$tpr, score_llm_t_resolved$tpr,
+    score_rag_p_resolved$tpr, score_rag_a_resolved$tpr, score_rag_t_resolved$tpr,
+    score_kg_llm_p_resolved$tpr, score_kg_llm_a_resolved$tpr, score_kg_llm_t_resolved$tpr
+  ),
+  FDR = c(
+    score_llm_p_resolved$fdr, score_llm_a_resolved$fdr, score_llm_t_resolved$fdr,
+    score_rag_p_resolved$fdr, score_rag_a_resolved$fdr, score_rag_t_resolved$fdr,
+    score_kg_llm_p_resolved$fdr, score_kg_llm_a_resolved$fdr, score_kg_llm_t_resolved$fdr
+  ),
+  F1 = c(
+    score_llm_p_resolved$f1, score_llm_a_resolved$f1, score_llm_t_resolved$f1,
+    score_rag_p_resolved$f1, score_rag_a_resolved$f1, score_rag_t_resolved$f1,
+    score_kg_llm_p_resolved$f1, score_kg_llm_a_resolved$f1, score_kg_llm_t_resolved$f1
+  ),
+  HD = c(
+    score_llm_p_resolved$hd, score_llm_a_resolved$hd, score_llm_t_resolved$hd,
+    score_rag_p_resolved$hd, score_rag_a_resolved$hd, score_rag_t_resolved$hd,
+    score_kg_llm_p_resolved$hd, score_kg_llm_a_resolved$hd, score_kg_llm_t_resolved$hd
+  ),
+  SHD = c(
+    score_llm_p_resolved$shd, score_llm_a_resolved$shd, score_llm_t_resolved$shd,
+    score_rag_p_resolved$shd, score_rag_a_resolved$shd, score_rag_t_resolved$shd,
+    score_kg_llm_p_resolved$shd, score_kg_llm_a_resolved$shd, score_kg_llm_t_resolved$shd
+  )
+)
+
+DT::datatable(resolved_comparison,
+              rownames = FALSE,
+              caption = "Comparison of All Resolved Edge Predictions",
+              options = list(pageLength = 10, scrollX = TRUE)) %>%
+  DT::formatRound(columns = c("TPR", "FDR", "F1"), digits = 3)
+
+write_csv(resolved_comparison, "results/mistral_knowledge_system_results_resolved.csv")
+```
+
+## KACD
+
+```{r}
+kg_llm_causal_literature <- kg_llm_pred %>% select(Var1, Var2, `Causal Literature Prediction`) %>% filter(`Causal Literature Prediction`)
+llm_full_causal_literature <- llm_full_pred %>% select(Var1, Var2, `Causal Literature Prediction`) %>% filter(`Causal Literature Prediction`)
+rag_full_causal_literature <- rag_full_pred %>% select(Var1, Var2, `Causal Literature Prediction`) %>% filter(`Causal Literature Prediction`)
+score_kg_llm_causal_literature <- score(expert_edges, kg_llm_causal_literature, node_names)
+score_llm_causal_literature <- score(expert_edges, llm_full_causal_literature, node_names)
+score_rag_causal_literature <- score(expert_edges, rag_full_causal_literature, node_names)
+```
+
+## Agreement between Knowledge Systems and the Proto model
+
+```{r}
+# Calculate agreement for all resolved systems
+agreement_kg_llm_p <- score(proto_df_pred, kg_llm_plausibility_resolved, node_names)
+agreement_kg_llm_a <- score(proto_df_pred, kg_llm_association_resolved, node_names)
+agreement_kg_llm_t <- score(proto_df_pred, kg_llm_temporality_resolved, node_names)
+agreement_kg_llm_cl <- score(proto_df_pred, kg_llm_causal_literature, node_names)
+
+agreement_llm_p <- score(proto_df_pred, llm_plausibility_resolved, node_names)
+agreement_llm_a <- score(proto_df_pred, llm_association_resolved, node_names)
+agreement_llm_t <- score(proto_df_pred, llm_temporality_resolved, node_names)
+agreement_llm_cl <- score(proto_df_pred, llm_full_causal_literature, node_names)
+
+agreement_rag_p <- score(proto_df_pred, rag_plausibility_resolved, node_names)
+agreement_rag_a <- score(proto_df_pred, rag_association_resolved, node_names)
+agreement_rag_t <- score(proto_df_pred, rag_temporality_resolved, node_names)
+agreement_rag_cl <- score(proto_df_pred, rag_full_causal_literature, node_names)
+```
+
+```{r}
+# Create agreement table
+agreement_comparison <- data.frame(
+  System = c(
+    "LLM", "LLM", "LLM", "LLM",
+    "RAG", "RAG", "RAG", "RAG",
+    "KG-RAG", "KG-RAG", "KG-RAG", "KG-RAG"
+  ),
+  Metric = c(
+    "Plausibility", "Association", "Temporality", "Direct Causal",
+    "Plausibility", "Association", "Temporality", "Direct Causal",
+    "Plausibility", "Association", "Temporality", "Direct Causal"
+  ),
+  HD = c(
+    agreement_llm_p$hd, agreement_llm_a$hd, agreement_llm_t$hd, agreement_llm_cl$hd,
+    agreement_rag_p$hd, agreement_rag_a$hd, agreement_rag_t$hd, agreement_rag_cl$hd,
+    agreement_kg_llm_p$hd, agreement_kg_llm_a$hd, agreement_kg_llm_t$hd, agreement_kg_llm_cl$hd
+  ),
+  SHD = c(
+    agreement_llm_p$shd, agreement_llm_a$shd, agreement_llm_t$shd, agreement_llm_cl$shd,
+    agreement_rag_p$shd, agreement_rag_a$shd, agreement_rag_t$shd, agreement_rag_cl$shd,
+    agreement_kg_llm_p$shd, agreement_kg_llm_a$shd, agreement_kg_llm_t$shd, agreement_kg_llm_cl$shd
+  )
+)
+
+DT::datatable(agreement_comparison,
+              rownames = FALSE,
+              caption = "Agreement between Knowledge Systems and Proto Model",
+              options = list(pageLength = 12, scrollX = TRUE))
+
+write_csv(agreement_comparison, "results/mistral_agreement_with_proto.csv")
+```
+
+## KACD with Proto
+
+```{r}
+# Calculate scores for all proto-resolved dataframes
+score_kg_llm_p_with_proto <- score(expert_edges, kg_llm_plausibility_with_proto_resolved, node_names)
+score_kg_llm_a_with_proto <- score(expert_edges, kg_llm_association_with_proto_resolved, node_names)
+score_kg_llm_t_with_proto <- score(expert_edges, kg_llm_temporality_with_proto_resolved, node_names)
+score_kg_llm_cl_with_proto <- score(expert_edges, kg_llm_causal_lit_with_proto_resolved, node_names)
+
+score_llm_p_with_proto <- score(expert_edges, llm_plausibility_with_proto_resolved, node_names)
+score_llm_a_with_proto <- score(expert_edges, llm_association_with_proto_resolved, node_names)
+score_llm_t_with_proto <- score(expert_edges, llm_temporality_with_proto_resolved, node_names)
+score_llm_cl_with_proto <- score(expert_edges, llm_causal_lit_with_proto_resolved, node_names)
+
+score_rag_p_with_proto <- score(expert_edges, rag_plausibility_with_proto_resolved, node_names)
+score_rag_a_with_proto <- score(expert_edges, rag_association_with_proto_resolved, node_names)
+score_rag_t_with_proto <- score(expert_edges, rag_temporality_with_proto_resolved, node_names)
+score_rag_cl_with_proto <- score(expert_edges, rag_causal_lit_with_proto_resolved, node_names)
+
+# Create comparison table for proto-resolved edges
+proto_f1 <- score_proto_df_pred$f1
+
+proto_resolved_comparison <- data.frame(
+  System = c(
+    "LLM", "LLM", "LLM", "LLM",
+    "RAG", "RAG", "RAG", "RAG",
+    "KG-RAG", "KG-RAG", "KG-RAG", "KG-RAG"
+  ),
+  Metric = c(
+    "Plausibility", "Association", "Temporality", "Direct Causal",
+    "Plausibility", "Association", "Temporality", "Direct Causal",
+    "Plausibility", "Association", "Temporality", "Direct Causal"
+  ),
+  TPR = c(
+    score_llm_p_with_proto$tpr, score_llm_a_with_proto$tpr, score_llm_t_with_proto$tpr, score_llm_cl_with_proto$tpr,
+    score_rag_p_with_proto$tpr, score_rag_a_with_proto$tpr, score_rag_t_with_proto$tpr, score_rag_cl_with_proto$tpr,
+    score_kg_llm_p_with_proto$tpr, score_kg_llm_a_with_proto$tpr, score_kg_llm_t_with_proto$tpr, score_kg_llm_cl_with_proto$tpr
+  ),
+  FDR = c(
+    score_llm_p_with_proto$fdr, score_llm_a_with_proto$fdr, score_llm_t_with_proto$fdr, score_llm_cl_with_proto$fdr,
+    score_rag_p_with_proto$fdr, score_rag_a_with_proto$fdr, score_rag_t_with_proto$fdr, score_rag_cl_with_proto$fdr,
+    score_kg_llm_p_with_proto$fdr, score_kg_llm_a_with_proto$fdr, score_kg_llm_t_with_proto$fdr, score_kg_llm_cl_with_proto$fdr
+  ),
+  F1 = c(
+    score_llm_p_with_proto$f1, score_llm_a_with_proto$f1, score_llm_t_with_proto$f1, score_llm_cl_with_proto$f1,
+    score_rag_p_with_proto$f1, score_rag_a_with_proto$f1, score_rag_t_with_proto$f1, score_rag_cl_with_proto$f1,
+    score_kg_llm_p_with_proto$f1, score_kg_llm_a_with_proto$f1, score_kg_llm_t_with_proto$f1, score_kg_llm_cl_with_proto$f1
+  ),
+  Delta_F1_P = c(
+    score_llm_p_with_proto$f1 - proto_f1, score_llm_a_with_proto$f1 - proto_f1, score_llm_t_with_proto$f1 - proto_f1, score_llm_cl_with_proto$f1 - proto_f1,
+    score_rag_p_with_proto$f1 - proto_f1, score_rag_a_with_proto$f1 - proto_f1, score_rag_t_with_proto$f1 - proto_f1, score_rag_cl_with_proto$f1 - proto_f1,
+    score_kg_llm_p_with_proto$f1 - proto_f1, score_kg_llm_a_with_proto$f1 - proto_f1, score_kg_llm_t_with_proto$f1 - proto_f1, score_kg_llm_cl_with_proto$f1 - proto_f1
+  ),
+  Delta_F1_KS = c(
+    score_llm_p_with_proto$f1 - score_llm_p_resolved$f1, score_llm_a_with_proto$f1 - score_llm_a_resolved$f1, score_llm_t_with_proto$f1 - score_llm_t_resolved$f1, score_llm_cl_with_proto$f1 - score_llm_causal_literature$f1,
+    score_rag_p_with_proto$f1 - score_rag_p_resolved$f1, score_rag_a_with_proto$f1 - score_rag_a_resolved$f1, score_rag_t_with_proto$f1 - score_rag_t_resolved$f1, score_rag_cl_with_proto$f1 - score_rag_causal_literature$f1,
+    score_kg_llm_p_with_proto$f1 - score_kg_llm_p_resolved$f1, score_kg_llm_a_with_proto$f1 - score_kg_llm_a_resolved$f1, score_kg_llm_t_with_proto$f1 - score_kg_llm_t_resolved$f1, score_kg_llm_cl_with_proto$f1 - score_kg_llm_causal_literature$f1
+  ),
+  HD = c(
+    score_llm_p_with_proto$hd, score_llm_a_with_proto$hd, score_llm_t_with_proto$hd, score_llm_cl_with_proto$hd,
+    score_rag_p_with_proto$hd, score_rag_a_with_proto$hd, score_rag_t_with_proto$hd, score_rag_cl_with_proto$hd,
+    score_kg_llm_p_with_proto$hd, score_kg_llm_a_with_proto$hd, score_kg_llm_t_with_proto$hd, score_kg_llm_cl_with_proto$hd
+  ),
+  SHD = c(
+    score_llm_p_with_proto$shd, score_llm_a_with_proto$shd, score_llm_t_with_proto$shd, score_llm_cl_with_proto$shd,
+    score_rag_p_with_proto$shd, score_rag_a_with_proto$shd, score_rag_t_with_proto$shd, score_rag_cl_with_proto$shd,
+    score_kg_llm_p_with_proto$shd, score_kg_llm_a_with_proto$shd, score_kg_llm_t_with_proto$shd, score_kg_llm_cl_with_proto$shd
+  )
+)
+
+DT::datatable(proto_resolved_comparison,
+              rownames = FALSE,
+              caption = "Knowledge Systems with Proto Model Direction Resolution",
+              options = list(pageLength = 12, scrollX = TRUE)) %>%
+  DT::formatRound(columns = c("TPR", "FDR", "F1", "Delta_F1_P", "Delta_F1_KS"), digits = 3)
+
+write_csv(proto_resolved_comparison, "results/mistral_knowledge_system_results_proto_resolved.csv")
+```
+
+```{r}
+score(expert_edges, kg_llm_temporality_with_proto_resolved, node_names, arcs = TRUE)
+```
+
+```{r}
+score(expert_edges, llm_temporality_with_proto_resolved, node_names, arcs = TRUE)
+```
+
+## Edge Differences between KG-RAG and RAG
+
+```{r}
+kg_llm_plausibility_resolved %>% anti_join(rag_plausibility_resolved, by = c("Var1", "Var2"))
+```
+
+## Gap Analysis: Edge Vote Table
+
+```{r}
+all_edges <- list(
+  kg_llm_plausibility_resolved %>% select(Var1, Var2) %>% mutate(Source = "KG-RAG Plausibility"),
+  kg_llm_association_resolved %>% select(Var1, Var2)  %>% mutate(Source = "KG-RAG Association"),
+  kg_llm_temporality_resolved %>% select(Var1, Var2)  %>% mutate(Source = "KG-RAG Temporality"),
+  llm_plausibility_resolved %>% select(Var1, Var2)    %>% mutate(Source = "LLM Plausibility"),
+  llm_association_resolved %>% select(Var1, Var2)     %>% mutate(Source = "LLM Association"),
+  llm_temporality_resolved %>% select(Var1, Var2)     %>% mutate(Source = "LLM Temporality"),
+  rag_plausibility_resolved %>% select(Var1, Var2)    %>% mutate(Source = "RAG Plausibility"),
+  rag_association_resolved %>% select(Var1, Var2)     %>% mutate(Source = "RAG Association"),
+  rag_temporality_resolved %>% select(Var1, Var2)     %>% mutate(Source = "RAG Temporality")
+)
+
+vote_count_table <- bind_rows(all_edges) %>% 
+  mutate(present = TRUE) %>% 
+  pivot_wider(
+    names_from = Source,
+    values_from = present,
+    values_fill = FALSE
+  ) %>% 
+  full_join(expert_edges %>% mutate(Expert = TRUE), by = c("Var1", "Var2")) %>% 
+  mutate(Expert = replace_na(Expert, FALSE)) %>% 
+  mutate(across(where(is.logical), ~replace_na(., FALSE))) %>%
+  mutate(Votes = rowSums(across(c(-Var1, -Var2, -Expert)))) %>%
+  arrange(desc(Expert), desc(Votes)) %>% 
+  select(Var1, Var2, Votes, Expert, everything())
+
+vote_count_table %>%
+  select(Var1, Var2, Votes, Expert) %>%
+  write_csv("results/mistral_edge_vote_counts.csv")
+
+vote_count_table
+```
+
+### What are the edges that the Knowledge Systems always get right?
+
+```{r}
+high_expert <- vote_count_table %>%
+  filter(Expert == TRUE & (Votes >= 6)) %>%
+  select(Var1, Var2, Votes) %>%
+  mutate(
+    Var1 = gsub("_", " ", Var1),
+    Var2 = gsub("_", " ", Var2),
+  )
+
+write_csv(high_expert, "results/mistral_edges_often_correct.csv")
+high_expert
+```
+
+### What edges are being caught by the LLMs that are not in the expert graph?
+
+```{r}
+high_not_expert <- vote_count_table %>%
+  filter(Expert == FALSE & (Votes >= 6)) %>%
+  select(Var1, Var2, Votes) %>%
+  mutate(
+    Var1 = gsub("_", " ", Var1),
+    Var2 = gsub("_", " ", Var2),
+  )
+
+write_csv(high_not_expert, "results/mistral_edges_often_incorrect.csv")
+high_not_expert
+```
+
+
+## Gap Analysis: Variable Aggregation
+
+```{r}
+calculate_variable_performance <- function(target_edges, predicted_edges) {
+  # label false negatives, false positives, and true positives
+  labeled_predictions <- apply_labels(target_edges, predicted_edges, arcs = TRUE)
+  labeled_predictions$tp_label <- labeled_predictions$tp %>% mutate(type = "TP")
+  labeled_predictions$fp_label <- labeled_predictions$fp %>% mutate(type = "FP")
+  labeled_predictions$fn_label <- labeled_predictions$fn %>% mutate(type = "FN")
+  labeled_predictions_type <- bind_rows(labeled_predictions$tp_label, labeled_predictions$fp_label, labeled_predictions$fn_label)
+  
+  # group by parent nodes and count fns, fps, and tps for each parent node
+  parent <- labeled_predictions_type %>%
+    group_by(from) %>%
+    summarise(
+      TP = sum(type == "TP"),
+      FP = sum(type == "FP"),
+      FN = sum(type == "FN"),
+      .groups = "drop"
+    )
+  
+  child <- labeled_predictions_type %>%
+    group_by(to) %>%
+    summarise(
+      TP = sum(type == "TP"),
+      FP = sum(type == "FP"),
+      FN = sum(type == "FN"),
+      .groups = "drop"
+    )
+  
+  return(list(parent = parent, child = child))
+  
+}
+
+kgrag_p_variable <- calculate_variable_performance(expert_edges, kg_llm_plausibility_resolved)
+kgrag_a_variable <- calculate_variable_performance(expert_edges, kg_llm_association_resolved)
+kgrag_t_variable <- calculate_variable_performance(expert_edges, kg_llm_temporality_resolved)
+
+rag_p_variable <- calculate_variable_performance(expert_edges, rag_plausibility_resolved)
+rag_a_variable <- calculate_variable_performance(expert_edges, rag_association_resolved)
+rag_t_variable <- calculate_variable_performance(expert_edges, rag_temporality_resolved)
+
+llm_p_variable <- calculate_variable_performance(expert_edges, llm_plausibility_resolved)
+llm_a_variable <- calculate_variable_performance(expert_edges, llm_association_resolved)
+llm_t_variable <- calculate_variable_performance(expert_edges, llm_temporality_resolved)
+```
+
+## Parent Table
+
+```{r}
+parent <- bind_rows(
+  kgrag_p_variable$parent,
+  kgrag_a_variable$parent,
+  kgrag_t_variable$parent,
+  llm_p_variable$parent,
+  llm_a_variable$parent,
+  llm_t_variable$parent,
+  rag_p_variable$parent,
+  rag_a_variable$parent,
+  rag_t_variable$parent
+) %>%
+  group_by(from) %>%
+  summarise(
+    total_tp = sum(TP),
+    total_fp = sum(FP),
+    total_fn = sum(FN),
+    tpr = round(sum(TP) / (sum(TP) + sum(FN)), 3),
+    fdr = round(sum(FP) / (sum(TP) + sum(FP)), 3)
+  ) %>% 
+  mutate(
+    from = gsub("_", " ", from)
+  )
+
+write_csv(parent, "results/mistral_gap_analysis_parent.csv")
+parent
+```
+
+## Child Table
+
+```{r}
+child <- bind_rows(
+  kgrag_p_variable$child,
+  kgrag_a_variable$child,
+  kgrag_t_variable$child,
+  llm_p_variable$child,
+  llm_a_variable$child,
+  llm_t_variable$child,
+  rag_p_variable$child,
+  rag_a_variable$child,
+  rag_t_variable$child
+) %>%
+  group_by(to) %>%
+  summarise(
+    total_tp = sum(TP),
+    total_fp = sum(FP),
+    total_fn = sum(FN),
+    tpr = round(sum(TP) / (sum(TP) + sum(FN)), 3),
+    fdr = round(sum(FP) / (sum(TP) + sum(FP)), 3)
+  ) %>% 
+  mutate(
+    to = gsub("_", " ", to)
+  )
+
+write_csv(child, "results/mistral_gap_analysis_child.csv")
+child
+```
+
+
+## Plots
+
+```{r}
+
+kg_llm_plausibility_resolved <- kg_llm_plausibility_resolved %>% mutate(qu = "Plausibility", System= "KG-RAG")
+kg_llm_association_resolved <- kg_llm_association_resolved %>% mutate(qu = "Association", System= "KG-RAG")
+kg_llm_temporality_resolved <- kg_llm_temporality_resolved %>% mutate(qu = "Temporality", System= "KG-RAG")
+
+kg_llm_test <- bind_rows(kg_llm_plausibility_resolved ,
+                          kg_llm_association_resolved,
+                         kg_llm_temporality_resolved ) %>% 
+  select(Var1, Var2, qu, System)
+
+
+llm_plausibility_resolved <- llm_plausibility_resolved %>% mutate(qu = "Plausibility", System= "LLM")
+llm_association_resolved <- llm_association_resolved %>% mutate(qu = "Association", System= "LLM")
+llm_temporality_resolved <- llm_temporality_resolved %>% mutate(qu = "Temporality", System= "LLM")
+
+llm_test <- bind_rows(llm_plausibility_resolved ,
+                          llm_association_resolved,
+                         llm_temporality_resolved ) %>% 
+  select(Var1, Var2, qu, System)
+
+
+rag_plausibility_resolved <- rag_plausibility_resolved %>% mutate(qu = "Plausibility", System= "RAG")
+rag_association_resolved <- rag_association_resolved %>% mutate(qu = "Association", System= "RAG")
+rag_temporality_resolved <- rag_temporality_resolved %>% mutate(qu = "Temporality", System= "RAG")
+
+rag_llm_test <- bind_rows(rag_plausibility_resolved ,
+                          rag_association_resolved,
+                         rag_temporality_resolved ) %>% 
+  select(Var1, Var2, qu, System)
+
+
+df <- bind_rows(llm_test, rag_llm_test,kg_llm_test )
+```
+
+```{r}
+llm_proto_thr_res_test <- list()
+
+.System <- c("LLM", "RAG", "KG-RAG")
+
+df_combined <- df %>% 
+ mutate(System = factor(System, levels = c("LLM", "RAG", "KG-RAG")) )
+
+df_wide <- df %>%
+  pivot_wider(names_from = qu, values_from = qu, values_fn = length, values_fill = 0) %>% mutate(  System = factor(System, levels = c("LLM", "RAG", "KG-RAG")) )
+
+for (i in 1:length(.System)){
+ 
+ temp_df <- df_wide %>% 
+  filter(System == .System[i]) %>% 
+  mutate(edge = paste(Var1, Var2, sep = "->")) %>% 
+  rename(from = Var1, to = Var2) %>% 
+  select(from, to, edge, 
+         Plausibility, Association, Temporality, System)
+ 
+ temp_df <- temp_df %>% 
+  mutate(
+   total_votes = ( 1 * Plausibility+ 10 * Association+ 100 * Temporality),
+   llm_strength = total_votes)  %>%  
+  mutate(edge = factor(edge, levels = edge))
+ 
+ temp_df  <-  temp_df  %>% 
+  mutate(
+   group = paste0(total_votes, " LLM vote", if_else(total_votes %in% c(0,1), "", "s"))
+  ) 
+ 
+ llm_proto_thr_res_test[[paste(.System[i])]]  <-  temp_df
+}
+
+llm_proto_thr_res_test2  <-  dplyr::bind_rows(llm_proto_thr_res_test, .id = "System")
+
+llm_proto_thr_res_test2 %>%
+ select(from, to, total_votes, System) %>%
+  mutate(  System = factor(System, levels = c("LLM", "RAG", "KG-RAG")) ) %>% 
+ mutate(votes = factor(total_votes, 
+                       levels = c(0, 1, 10, 100, 11, 101, 110, 111))) %>% 
+ ggplot(aes(x = to, y = from, fill = votes)) +
+ geom_tile(color = "white") +
+ facet_wrap(~ System) +
+ scale_fill_manual(
+  values = c(
+   "0"   = "gray",  # none
+   "1"   =  "#fdd0aa",  
+   "10"  = "#78a9ce",  
+   "100" ="#e03a42",  
+   "11"  = "#8cce7d", # ",  # teal (yellow + blue)
+   "101" = "#e26320", #9c6b97" ,  # orange (yellow + red)
+   "110" ="purple",
+   "111" = "#525252"   # black (all combined)
+  ),
+  name = "Query",
+  labels = c(
+   "0"   = "None",
+   "1"   = "Plausibility",
+   "10"  = "Association",
+   "11"  = "Plausibility & Association",
+   "100" = "Temporality",
+   "101" = "Plausibility & Temporality",
+   "110" = "Association & Temporality",
+   "111" = "Plausibility & Association & Temporality"
+  )
+ ) +
+ #theme_class(base_size = 14) +
+ theme(
+   legend.position = "bottom",     
+    legend.direction = "horizontal",
+  axis.text.x = element_text(size = 16, face = "bold", angle = 90, vjust = 0.5, hjust = 1),
+  axis.text.y  = element_text(size = 16, face = "bold"),
+  panel.spacing = unit(2, "lines"),
+  panel.grid = element_blank()
+  
+     
+ ) +
+ labs(
+  x = "Child (to)",
+  y = "Parent (from)",
+  title = ""
+  
+ )
+
+ ggsave("results/figures/nvotes.png", width = 12, height = 8, dpi = 300)
+```
+
+```{r}
+score_kg_llm_p_resolved_arcs <- kg_llm_plausibility_with_proto_resolved[1:2] %>%
+ mutate(System = "KG-RAG", query = "Plausibility")
+
+score_kg_llm_a_resolved_arcs<-  kg_llm_association_with_proto_resolved[1:2] %>%
+ mutate(System = "KG-RAG", query = "Association")
+
+score_kg_llm_t_resolved_arcs<- kg_llm_temporality_with_proto_resolved[1:2] %>%
+ mutate(System = "KG-RAG", query = "Temporality")
+
+score_llm_p_resolved_arcs <- llm_plausibility_with_proto_resolved[1:2] %>%
+ mutate(System = "LLM", query = "Plausibility")
+
+score_llm_a_resolved_arcs <-  llm_association_with_proto_resolved[1:2] %>%
+ mutate(System = "LLM", query = "Association")
+
+score_llm_t_resolved_arcs <- llm_temporality_with_proto_resolved[1:2] %>%
+ mutate(System = "LLM", query = "Temporality")
+
+score_rag_p_resolved_arcs <-  rag_plausibility_with_proto_resolved[1:2] %>%
+ mutate(System = "RAG", query = "Plausibility")
+score_rag_a_resolved_arcs <-  rag_association_with_proto_resolved[1:2] %>%
+ mutate(System = "RAG", query = "Association")
+score_rag_t_resolved_arcs <-  rag_temporality_with_proto_resolved[1:2] %>%
+ mutate(System = "RAG", query = "Temporality")
+
+
+df_combined <- bind_rows(score_kg_llm_p_resolved_arcs,
+                         score_kg_llm_a_resolved_arcs ,
+                         score_kg_llm_t_resolved_arcs ,
+                         score_llm_p_resolved_arcs ,
+                         score_llm_a_resolved_arcs ,
+                         score_llm_t_resolved_arcs ,
+                         score_rag_p_resolved_arcs ,
+                         score_rag_a_resolved_arcs, 
+                         score_rag_t_resolved_arcs )
+
+graphs_list <- list()
+
+for (m in unique(df_combined$System)){
+ 
+ temp_m_df <- df_combined %>% 
+  filter(System == m)
+ 
+ for (query in c("Plausibility", "Association", "Temporality")){
+  
+  # The graph is build only on the edges marked as TRUE by the q LLM query
+  temp_df <- temp_m_df[temp_m_df$query==query,]
+  
+  # build the graph. Check cycles = FALSE is necessary because the networks
+  # are not true DAGs and the arc function eliminates cycles by default.
+  temp_dag <- empty.graph(unique(c(expert_edges$Var1, expert_edges$Var2)))
+  
+  arcs(temp_dag, check.cycles = FALSE) <- as.matrix(temp_df[,c("Var1", "Var2")])
+  graphs_list [[paste(m, query, sep = "_")]] <- temp_dag
+  
+ }
+}
+
+
+res_compare_arcs  <- mapply(function(x, name){
+ res <- bnlearn::compare(expert_dag,x, arcs = T)
+ 
+ b <- do.call(rbind, res) %>% as.data.frame()
+ b$type <- rep(names(res), unlist(lapply(res, nrow)))
+ b$System <- name
+ 
+ return(b)
+},graphs_list , names(graphs_list ), SIMPLIFY = F) %>% 
+ bind_rows()
+
+```
+
+
+```{r}
+res_compare_arcs   %>% 
+ mutate(
+  edge   = paste(from, to, sep = "-"),
+  system = str_split(System, "_", simplify = TRUE)[, 1],
+  query  = str_split(System, "_", simplify = TRUE)[, 2],
+  system = factor(system, levels = c("LLM", "RAG", "KG-RAG")),
+  query  = factor(query,  levels = c("Plausibility", "Association", "Temporality", "Causal"))
+ )  %>% 
+ ggplot(aes(x = to, y = from, fill = type)) +
+ geom_tile(color = "white", linewidth = 0.3) +
+ facet_wrap( ~ system+query, nrow = 3) +
+ scale_fill_manual(
+  values = c("fn"= "#B557A9" , "fp" = "#E494AB" , "tp" = "#2686A0"),
+  name   = "Edge type",
+  labels = c("False Negative", "False Positive", "True Positive")
+ ) +
+ labs(
+  x = "Child node",
+  y = "Parent node",
+  #title = "Edge-level Comparison by System and Query Type"
+ ) +
+ # theme_fira() +
+ theme(
+  # axis text
+  axis.text.x  = element_text(size = 16, face = "bold", angle = 90, vjust = 0.5, hjust = 1),
+  axis.text.y  = element_text(size = 16, face = "bold"),
+  axis.title.x = element_text(size = 18, face = "bold", margin = margin(t = 10)),
+  axis.title.y = element_text(size = 18, face = "bold", margin = margin(r = 10)),
+  
+  # facet headers
+  strip.text   = element_text(size = 18, face = "bold"),
+  strip.background = element_rect(fill = "grey90", color = "white"),
+  
+  # legend
+  legend.title = element_text(size = 18, face = "bold"),
+  legend.text  = element_text(size = 16),
+  
+  # background
+  # panel.background = element_blank(),
+  # plot.background  = element_blank()
+ )
+
+ ggsave("results/figures/compare.png", width = 12, height = 12, dpi = 300)
+```
+
+# Knowledge Systems LLama
+
+## Load data
+
+```{r}
+# Unresolved
+full_results <- read_csv("data/llama/results_undirected_combined.csv") %>% select(-contains("...1"))
+
+# resolved
+kg_llm_plausibility_resolved <- read_csv("data/llama/directional_resolved_without_proto/kg_llm_plausibility_without_proto_resolved.csv")
+kg_llm_association_resolved <- read_csv("data/llama/directional_resolved_without_proto/kg_llm_association_without_proto_resolved.csv")
+kg_llm_temporality_resolved <- read_csv("data/llama/directional_resolved_without_proto/kg_llm_temporality_without_proto_resolved.csv")
+
+kg_llm_plausibility_with_proto_resolved <- read_csv("data/llama/directional_resolved_with_proto_and_causal_lit/kg_llm_plausibility_with_proto_resolved.csv")
+kg_llm_association_with_proto_resolved <- read_csv("data/llama/directional_resolved_with_proto_and_causal_lit/kg_llm_association_with_proto_resolved.csv")
+kg_llm_temporality_with_proto_resolved <- read_csv("data/llama/directional_resolved_with_proto_and_causal_lit/kg_llm_temporality_with_proto_resolved.csv")
+kg_llm_causal_lit_with_proto_resolved <- read_csv("data/llama/directional_resolved_with_proto_and_causal_lit/kg_llm_causal_lit_with_proto_resolved.csv")
+
+llm_plausibility_resolved <- read_csv("data/llama/directional_resolved_without_proto/llm_plausibility_without_proto_resolved.csv")
+llm_association_resolved <- read_csv("data/llama/directional_resolved_without_proto/llm_association_without_proto_resolved.csv")
+llm_temporality_resolved <- read_csv("data/llama/directional_resolved_without_proto/llm_temporality_without_proto_resolved.csv")
+
+llm_plausibility_with_proto_resolved <- read_csv("data/llama/directional_resolved_with_proto_and_causal_lit/llm_plausibility_with_proto_resolved.csv")
+llm_association_with_proto_resolved <- read_csv("data/llama/directional_resolved_with_proto_and_causal_lit/llm_association_with_proto_resolved.csv")
+llm_temporality_with_proto_resolved <- read_csv("data/llama/directional_resolved_with_proto_and_causal_lit/llm_temporality_with_proto_resolved.csv")
+llm_causal_lit_with_proto_resolved <- read_csv("data/llama/directional_resolved_with_proto_and_causal_lit/llm_causal_lit_with_proto_resolved.csv")
+
+rag_plausibility_resolved <- read_csv("data/llama/directional_resolved_without_proto/rag_plausibility_without_proto_resolved.csv")
+rag_association_resolved <- read_csv("data/llama/directional_resolved_without_proto/rag_association_without_proto_resolved.csv")
+rag_temporality_resolved <- read_csv("data/llama/directional_resolved_without_proto/rag_temporality_without_proto_resolved.csv")
+
+rag_plausibility_with_proto_resolved <- read_csv("data/llama/directional_resolved_with_proto_and_causal_lit/rag_plausibility_with_proto_resolved.csv")
+rag_association_with_proto_resolved <- read_csv("data/llama/directional_resolved_with_proto_and_causal_lit/rag_association_with_proto_resolved.csv")
+rag_temporality_with_proto_resolved <- read_csv("data/llama/directional_resolved_with_proto_and_causal_lit/rag_temporality_with_proto_resolved.csv")
+rag_causal_lit_with_proto_resolved <- read_csv("data/llama/directional_resolved_with_proto_and_causal_lit/rag_causal_lit_with_proto_resolved.csv")
+```
+
+## Unresolved Directional Predictions
+### Preprocessing
+```{r}
+kg_llm_full <- full_results %>% 
+  filter(context == "kg+llm_full.csv")
+
+llm_full <- full_results %>% 
+  filter(context == "llm_full.csv")
+
+rag_full <- full_results %>% 
+  filter(context == "rag_full.csv")
+
+cat("Data filtered by context:/n")
+cat("kg+llm_full:", nrow(kg_llm_full), "rows/n")
+cat("llm_full:", nrow(llm_full), "rows/n")
+cat("rag_full:", nrow(rag_full), "rows/n")
+
+kg_llm_pred <- kg_llm_full %>% 
+  select("Var1", "Var2", "Plausibility", "Association", "Temporality", `Causal Literature Prediction`)
+llm_full_pred <- llm_full %>% 
+  select("Var1", "Var2", "Plausibility", "Association", "Temporality", `Causal Literature Prediction`)
+rag_full_pred <- rag_full %>% 
+  select("Var1", "Var2", "Plausibility", "Association", "Temporality", `Causal Literature Prediction`)
+```
+
+### Performance by Metric
+
+```{r}
+# Create performance table for each system and metric
+systems <- list(llm_full_pred, rag_full_pred, kg_llm_pred)
+system_names <- c("LLM", "RAG", "KG-RAG")
+metrics <- c("Plausibility", "Association", "Temporality", "Causal Literature Prediction")
+metric_names <- c("Plausibility", "Association", "Temporality", "Direct Causal")
+
+performance_results <- data.frame()
+
+for (i in 1:length(systems)) {
+  for (j in 1:length(metrics)) {
+    # Filter edges where metric is TRUE
+    filtered <- systems[[i]] %>% filter(.data[[metrics[j]]] == TRUE)
+
+    # Calculate performance scores
+    perf <- score(expert_edges, filtered, node_names, arcs = FALSE)
+
+    result_row <- data.frame(
+      System = system_names[i],
+      Metric = metric_names[j],
+      TPR = perf$tpr,
+      FDR = perf$fdr,
+      F1 = perf$f1,
+      HD = perf$hd,
+      SHD = perf$shd,
+      check.names = FALSE
+    )
+    performance_results <- rbind(performance_results, result_row)
+  }
+}
+
+DT::datatable(performance_results,
+              rownames = FALSE,
+              caption = "Knowledge System Performance by Metric",
+              options = list(pageLength = 12, scrollX = TRUE)) %>%
+  DT::formatRound(columns = c('TPR', 'FDR', 'F1'), digits = 3)
+
+write_csv(performance_results, "results/llama_knowledge_system_performance_unresolved.csv")
+```
+
+## Direction-Resolved Predictions
+
+```{r}
+# Calculate scores for all resolved dataframes
+score_kg_llm_p_resolved <- score(expert_edges, kg_llm_plausibility_resolved, node_names)
+score_kg_llm_a_resolved <- score(expert_edges, kg_llm_association_resolved, node_names)
+score_kg_llm_t_resolved <- score(expert_edges, kg_llm_temporality_resolved, node_names)
+
+score_llm_p_resolved <- score(expert_edges, llm_plausibility_resolved, node_names)
+score_llm_a_resolved <- score(expert_edges, llm_association_resolved, node_names)
+score_llm_t_resolved <- score(expert_edges, llm_temporality_resolved, node_names)
+
+score_rag_p_resolved <- score(expert_edges, rag_plausibility_resolved, node_names)
+score_rag_a_resolved <- score(expert_edges, rag_association_resolved, node_names)
+score_rag_t_resolved <- score(expert_edges, rag_temporality_resolved, node_names)
+
+# Create comparison table for resolved edges
+resolved_comparison <- data.frame(
+  System = c(
+    "LLM", "LLM", "LLM",
+    "RAG", "RAG", "RAG",
+    "KG-RAG", "KG-RAG", "KG-RAG"
+  ),
+  Metric = c(
+    "Plausibility", "Association", "Temporality",
+    "Plausibility", "Association", "Temporality",
+    "Plausibility", "Association", "Temporality"
+  ),
+  TPR = c(
+    score_llm_p_resolved$tpr, score_llm_a_resolved$tpr, score_llm_t_resolved$tpr,
+    score_rag_p_resolved$tpr, score_rag_a_resolved$tpr, score_rag_t_resolved$tpr,
+    score_kg_llm_p_resolved$tpr, score_kg_llm_a_resolved$tpr, score_kg_llm_t_resolved$tpr
+  ),
+  FDR = c(
+    score_llm_p_resolved$fdr, score_llm_a_resolved$fdr, score_llm_t_resolved$fdr,
+    score_rag_p_resolved$fdr, score_rag_a_resolved$fdr, score_rag_t_resolved$fdr,
+    score_kg_llm_p_resolved$fdr, score_kg_llm_a_resolved$fdr, score_kg_llm_t_resolved$fdr
+  ),
+  F1 = c(
+    score_llm_p_resolved$f1, score_llm_a_resolved$f1, score_llm_t_resolved$f1,
+    score_rag_p_resolved$f1, score_rag_a_resolved$f1, score_rag_t_resolved$f1,
+    score_kg_llm_p_resolved$f1, score_kg_llm_a_resolved$f1, score_kg_llm_t_resolved$f1
+  ),
+  HD = c(
+    score_llm_p_resolved$hd, score_llm_a_resolved$hd, score_llm_t_resolved$hd,
+    score_rag_p_resolved$hd, score_rag_a_resolved$hd, score_rag_t_resolved$hd,
+    score_kg_llm_p_resolved$hd, score_kg_llm_a_resolved$hd, score_kg_llm_t_resolved$hd
+  ),
+  SHD = c(
+    score_llm_p_resolved$shd, score_llm_a_resolved$shd, score_llm_t_resolved$shd,
+    score_rag_p_resolved$shd, score_rag_a_resolved$shd, score_rag_t_resolved$shd,
+    score_kg_llm_p_resolved$shd, score_kg_llm_a_resolved$shd, score_kg_llm_t_resolved$shd
+  )
+)
+
+DT::datatable(resolved_comparison,
+              rownames = FALSE,
+              caption = "Comparison of All Resolved Edge Predictions",
+              options = list(pageLength = 10, scrollX = TRUE)) %>%
+  DT::formatRound(columns = c("TPR", "FDR", "F1"), digits = 3)
+
+write_csv(resolved_comparison, "results/llama_knowledge_system_results_resolved.csv")
+```
+
+## KACD
+
+```{r}
+kg_llm_causal_literature <- kg_llm_pred %>% select(Var1, Var2, `Causal Literature Prediction`) %>% filter(`Causal Literature Prediction`)
+llm_full_causal_literature <- llm_full_pred %>% select(Var1, Var2, `Causal Literature Prediction`) %>% filter(`Causal Literature Prediction`)
+rag_full_causal_literature <- rag_full_pred %>% select(Var1, Var2, `Causal Literature Prediction`) %>% filter(`Causal Literature Prediction`)
+score_kg_llm_causal_literature <- score(expert_edges, kg_llm_causal_literature, node_names)
+score_llm_causal_literature <- score(expert_edges, llm_full_causal_literature, node_names)
+score_rag_causal_literature <- score(expert_edges, rag_full_causal_literature, node_names)
+```
+
+## Agreement between Knowledge Systems and the Proto model
+
+```{r}
+# Calculate agreement for all resolved systems
+agreement_kg_llm_p <- score(proto_df_pred, kg_llm_plausibility_resolved, node_names)
+agreement_kg_llm_a <- score(proto_df_pred, kg_llm_association_resolved, node_names)
+agreement_kg_llm_t <- score(proto_df_pred, kg_llm_temporality_resolved, node_names)
+agreement_kg_llm_cl <- score(proto_df_pred, kg_llm_causal_literature, node_names)
+
+agreement_llm_p <- score(proto_df_pred, llm_plausibility_resolved, node_names)
+agreement_llm_a <- score(proto_df_pred, llm_association_resolved, node_names)
+agreement_llm_t <- score(proto_df_pred, llm_temporality_resolved, node_names)
+agreement_llm_cl <- score(proto_df_pred, llm_full_causal_literature, node_names)
+
+agreement_rag_p <- score(proto_df_pred, rag_plausibility_resolved, node_names)
+agreement_rag_a <- score(proto_df_pred, rag_association_resolved, node_names)
+agreement_rag_t <- score(proto_df_pred, rag_temporality_resolved, node_names)
+agreement_rag_cl <- score(proto_df_pred, rag_full_causal_literature, node_names)
+```
+
+```{r}
+# Create agreement table
+agreement_comparison <- data.frame(
+  System = c(
+    "LLM", "LLM", "LLM", "LLM",
+    "RAG", "RAG", "RAG", "RAG",
+    "KG-RAG", "KG-RAG", "KG-RAG", "KG-RAG"
+  ),
+  Metric = c(
+    "Plausibility", "Association", "Temporality", "Direct Causal",
+    "Plausibility", "Association", "Temporality", "Direct Causal",
+    "Plausibility", "Association", "Temporality", "Direct Causal"
+  ),
+  HD = c(
+    agreement_llm_p$hd, agreement_llm_a$hd, agreement_llm_t$hd, agreement_llm_cl$hd,
+    agreement_rag_p$hd, agreement_rag_a$hd, agreement_rag_t$hd, agreement_rag_cl$hd,
+    agreement_kg_llm_p$hd, agreement_kg_llm_a$hd, agreement_kg_llm_t$hd, agreement_kg_llm_cl$hd
+  ),
+  SHD = c(
+    agreement_llm_p$shd, agreement_llm_a$shd, agreement_llm_t$shd, agreement_llm_cl$shd,
+    agreement_rag_p$shd, agreement_rag_a$shd, agreement_rag_t$shd, agreement_rag_cl$shd,
+    agreement_kg_llm_p$shd, agreement_kg_llm_a$shd, agreement_kg_llm_t$shd, agreement_kg_llm_cl$shd
+  )
+)
+
+DT::datatable(agreement_comparison,
+              rownames = FALSE,
+              caption = "Agreement between Knowledge Systems and Proto Model",
+              options = list(pageLength = 12, scrollX = TRUE))
+
+write_csv(agreement_comparison, "results/llama_agreement_with_proto.csv")
+```
+
+## KACD with Proto
+
+```{r}
+# Calculate scores for all proto-resolved dataframes
+score_kg_llm_p_with_proto <- score(expert_edges, kg_llm_plausibility_with_proto_resolved, node_names)
+score_kg_llm_a_with_proto <- score(expert_edges, kg_llm_association_with_proto_resolved, node_names)
+score_kg_llm_t_with_proto <- score(expert_edges, kg_llm_temporality_with_proto_resolved, node_names)
+score_kg_llm_cl_with_proto <- score(expert_edges, kg_llm_causal_lit_with_proto_resolved, node_names)
+
+score_llm_p_with_proto <- score(expert_edges, llm_plausibility_with_proto_resolved, node_names)
+score_llm_a_with_proto <- score(expert_edges, llm_association_with_proto_resolved, node_names)
+score_llm_t_with_proto <- score(expert_edges, llm_temporality_with_proto_resolved, node_names)
+score_llm_cl_with_proto <- score(expert_edges, llm_causal_lit_with_proto_resolved, node_names)
+
+score_rag_p_with_proto <- score(expert_edges, rag_plausibility_with_proto_resolved, node_names)
+score_rag_a_with_proto <- score(expert_edges, rag_association_with_proto_resolved, node_names)
+score_rag_t_with_proto <- score(expert_edges, rag_temporality_with_proto_resolved, node_names)
+score_rag_cl_with_proto <- score(expert_edges, rag_causal_lit_with_proto_resolved, node_names)
+
+# Create comparison table for proto-resolved edges
+proto_f1 <- score_proto_df_pred$f1
+
+proto_resolved_comparison <- data.frame(
+  System = c(
+    "LLM", "LLM", "LLM", "LLM",
+    "RAG", "RAG", "RAG", "RAG",
+    "KG-RAG", "KG-RAG", "KG-RAG", "KG-RAG"
+  ),
+  Metric = c(
+    "Plausibility", "Association", "Temporality", "Direct Causal",
+    "Plausibility", "Association", "Temporality", "Direct Causal",
+    "Plausibility", "Association", "Temporality", "Direct Causal"
+  ),
+  TPR = c(
+    score_llm_p_with_proto$tpr, score_llm_a_with_proto$tpr, score_llm_t_with_proto$tpr, score_llm_cl_with_proto$tpr,
+    score_rag_p_with_proto$tpr, score_rag_a_with_proto$tpr, score_rag_t_with_proto$tpr, score_rag_cl_with_proto$tpr,
+    score_kg_llm_p_with_proto$tpr, score_kg_llm_a_with_proto$tpr, score_kg_llm_t_with_proto$tpr, score_kg_llm_cl_with_proto$tpr
+  ),
+  FDR = c(
+    score_llm_p_with_proto$fdr, score_llm_a_with_proto$fdr, score_llm_t_with_proto$fdr, score_llm_cl_with_proto$fdr,
+    score_rag_p_with_proto$fdr, score_rag_a_with_proto$fdr, score_rag_t_with_proto$fdr, score_rag_cl_with_proto$fdr,
+    score_kg_llm_p_with_proto$fdr, score_kg_llm_a_with_proto$fdr, score_kg_llm_t_with_proto$fdr, score_kg_llm_cl_with_proto$fdr
+  ),
+  F1 = c(
+    score_llm_p_with_proto$f1, score_llm_a_with_proto$f1, score_llm_t_with_proto$f1, score_llm_cl_with_proto$f1,
+    score_rag_p_with_proto$f1, score_rag_a_with_proto$f1, score_rag_t_with_proto$f1, score_rag_cl_with_proto$f1,
+    score_kg_llm_p_with_proto$f1, score_kg_llm_a_with_proto$f1, score_kg_llm_t_with_proto$f1, score_kg_llm_cl_with_proto$f1
+  ),
+  Delta_F1_P = c(
+    score_llm_p_with_proto$f1 - proto_f1, score_llm_a_with_proto$f1 - proto_f1, score_llm_t_with_proto$f1 - proto_f1, score_llm_cl_with_proto$f1 - proto_f1,
+    score_rag_p_with_proto$f1 - proto_f1, score_rag_a_with_proto$f1 - proto_f1, score_rag_t_with_proto$f1 - proto_f1, score_rag_cl_with_proto$f1 - proto_f1,
+    score_kg_llm_p_with_proto$f1 - proto_f1, score_kg_llm_a_with_proto$f1 - proto_f1, score_kg_llm_t_with_proto$f1 - proto_f1, score_kg_llm_cl_with_proto$f1 - proto_f1
+  ),
+  Delta_F1_KS = c(
+    score_llm_p_with_proto$f1 - score_llm_p_resolved$f1, score_llm_a_with_proto$f1 - score_llm_a_resolved$f1, score_llm_t_with_proto$f1 - score_llm_t_resolved$f1, score_llm_cl_with_proto$f1 - score_llm_causal_literature$f1,
+    score_rag_p_with_proto$f1 - score_rag_p_resolved$f1, score_rag_a_with_proto$f1 - score_rag_a_resolved$f1, score_rag_t_with_proto$f1 - score_rag_t_resolved$f1, score_rag_cl_with_proto$f1 - score_rag_causal_literature$f1,
+    score_kg_llm_p_with_proto$f1 - score_kg_llm_p_resolved$f1, score_kg_llm_a_with_proto$f1 - score_kg_llm_a_resolved$f1, score_kg_llm_t_with_proto$f1 - score_kg_llm_t_resolved$f1, score_kg_llm_cl_with_proto$f1 - score_kg_llm_causal_literature$f1
+  ),
+  HD = c(
+    score_llm_p_with_proto$hd, score_llm_a_with_proto$hd, score_llm_t_with_proto$hd, score_llm_cl_with_proto$hd,
+    score_rag_p_with_proto$hd, score_rag_a_with_proto$hd, score_rag_t_with_proto$hd, score_rag_cl_with_proto$hd,
+    score_kg_llm_p_with_proto$hd, score_kg_llm_a_with_proto$hd, score_kg_llm_t_with_proto$hd, score_kg_llm_cl_with_proto$hd
+  ),
+  SHD = c(
+    score_llm_p_with_proto$shd, score_llm_a_with_proto$shd, score_llm_t_with_proto$shd, score_llm_cl_with_proto$shd,
+    score_rag_p_with_proto$shd, score_rag_a_with_proto$shd, score_rag_t_with_proto$shd, score_rag_cl_with_proto$shd,
+    score_kg_llm_p_with_proto$shd, score_kg_llm_a_with_proto$shd, score_kg_llm_t_with_proto$shd, score_kg_llm_cl_with_proto$shd
+  )
+)
+
+DT::datatable(proto_resolved_comparison,
+              rownames = FALSE,
+              caption = "Knowledge Systems with Proto Model Direction Resolution",
+              options = list(pageLength = 12, scrollX = TRUE)) %>%
+  DT::formatRound(columns = c("TPR", "FDR", "F1", "Delta_F1_P", "Delta_F1_KS"), digits = 3)
+
+write_csv(proto_resolved_comparison, "results/llama_knowledge_system_results_proto_resolved.csv")
+```
+
+
+## Edge Differences between KG-RAG and RAG
+
+```{r}
+kg_llm_plausibility_resolved %>% anti_join(rag_plausibility_resolved, by = c("Var1", "Var2"))
+```
+
+## Gap Analysis: Edge Vote Table
+
+```{r}
+all_edges <- list(
+  kg_llm_plausibility_resolved %>% select(Var1, Var2) %>% mutate(Source = "KG-RAG Plausibility"),
+  kg_llm_association_resolved %>% select(Var1, Var2)  %>% mutate(Source = "KG-RAG Association"),
+  kg_llm_temporality_resolved %>% select(Var1, Var2)  %>% mutate(Source = "KG-RAG Temporality"),
+  llm_plausibility_resolved %>% select(Var1, Var2)    %>% mutate(Source = "LLM Plausibility"),
+  llm_association_resolved %>% select(Var1, Var2)     %>% mutate(Source = "LLM Association"),
+  llm_temporality_resolved %>% select(Var1, Var2)     %>% mutate(Source = "LLM Temporality"),
+  rag_plausibility_resolved %>% select(Var1, Var2)    %>% mutate(Source = "RAG Plausibility"),
+  rag_association_resolved %>% select(Var1, Var2)     %>% mutate(Source = "RAG Association"),
+  rag_temporality_resolved %>% select(Var1, Var2)     %>% mutate(Source = "RAG Temporality")
+)
+
+vote_count_table <- bind_rows(all_edges) %>% 
+  mutate(present = TRUE) %>% 
+  pivot_wider(
+    names_from = Source,
+    values_from = present,
+    values_fill = FALSE
+  ) %>% 
+  full_join(expert_edges %>% mutate(Expert = TRUE), by = c("Var1", "Var2")) %>% 
+  mutate(Expert = replace_na(Expert, FALSE)) %>% 
+  mutate(across(where(is.logical), ~replace_na(., FALSE))) %>%
+  mutate(Votes = rowSums(across(c(-Var1, -Var2, -Expert)))) %>%
+  arrange(desc(Expert), desc(Votes)) %>% 
+  select(Var1, Var2, Votes, Expert, everything())
+
+vote_count_table %>%
+  select(Var1, Var2, Votes, Expert) %>%
+  write_csv("results/llama_edge_vote_counts.csv")
+
+vote_count_table
+```
+
+### What are the edges that the Knowledge Systems always get right?
+
+```{r}
+high_expert <- vote_count_table %>%
+  filter(Expert == TRUE & (Votes >= 6)) %>%
+  select(Var1, Var2, Votes) %>%
+  mutate(
+    Var1 = gsub("_", " ", Var1),
+    Var2 = gsub("_", " ", Var2),
+  )
+
+write_csv(high_expert, "results/llama_edges_often_correct.csv")
+high_expert
+```
+
+### What edges are being caught by the LLMs that are not in the expert graph?
+
+```{r}
+high_not_expert <- vote_count_table %>%
+  filter(Expert == FALSE & (Votes >= 6)) %>%
+  select(Var1, Var2, Votes) %>%
+  mutate(
+    Var1 = gsub("_", " ", Var1),
+    Var2 = gsub("_", " ", Var2),
+  )
+
+write_csv(high_not_expert, "results/llama_edges_often_incorrect.csv")
+high_not_expert
+```
+
+
+## Gap Analysis: Variable Aggregation
+
+```{r}
+calculate_variable_performance <- function(target_edges, predicted_edges) {
+  # label false negatives, false positives, and true positives
+  labeled_predictions <- apply_labels(target_edges, predicted_edges, arcs = TRUE)
+  labeled_predictions$tp_label <- labeled_predictions$tp %>% mutate(type = "TP")
+  labeled_predictions$fp_label <- labeled_predictions$fp %>% mutate(type = "FP")
+  labeled_predictions$fn_label <- labeled_predictions$fn %>% mutate(type = "FN")
+  labeled_predictions_type <- bind_rows(labeled_predictions$tp_label, labeled_predictions$fp_label, labeled_predictions$fn_label)
+  
+  # group by parent nodes and count fns, fps, and tps for each parent node
+  parent <- labeled_predictions_type %>%
+    group_by(from) %>%
+    summarise(
+      TP = sum(type == "TP"),
+      FP = sum(type == "FP"),
+      FN = sum(type == "FN"),
+      .groups = "drop"
+    )
+  
+  child <- labeled_predictions_type %>%
+    group_by(to) %>%
+    summarise(
+      TP = sum(type == "TP"),
+      FP = sum(type == "FP"),
+      FN = sum(type == "FN"),
+      .groups = "drop"
+    )
+  
+  return(list(parent = parent, child = child))
+  
+}
+
+kgrag_p_variable <- calculate_variable_performance(expert_edges, kg_llm_plausibility_resolved)
+kgrag_a_variable <- calculate_variable_performance(expert_edges, kg_llm_association_resolved)
+kgrag_t_variable <- calculate_variable_performance(expert_edges, kg_llm_temporality_resolved)
+
+rag_p_variable <- calculate_variable_performance(expert_edges, rag_plausibility_resolved)
+rag_a_variable <- calculate_variable_performance(expert_edges, rag_association_resolved)
+rag_t_variable <- calculate_variable_performance(expert_edges, rag_temporality_resolved)
+
+llm_p_variable <- calculate_variable_performance(expert_edges, llm_plausibility_resolved)
+llm_a_variable <- calculate_variable_performance(expert_edges, llm_association_resolved)
+llm_t_variable <- calculate_variable_performance(expert_edges, llm_temporality_resolved)
+```
+
+## Parent Table
+
+```{r}
+parent <- bind_rows(
+  kgrag_p_variable$parent,
+  kgrag_a_variable$parent,
+  kgrag_t_variable$parent,
+  llm_p_variable$parent,
+  llm_a_variable$parent,
+  llm_t_variable$parent,
+  rag_p_variable$parent,
+  rag_a_variable$parent,
+  rag_t_variable$parent
+) %>%
+  group_by(from) %>%
+  summarise(
+    total_tp = sum(TP),
+    total_fp = sum(FP),
+    total_fn = sum(FN),
+    tpr = round(sum(TP) / (sum(TP) + sum(FN)), 3),
+    fdr = round(sum(FP) / (sum(TP) + sum(FP)), 3)
+  ) %>% 
+  mutate(
+    from = gsub("_", " ", from)
+  )
+
+write_csv(parent, "results/llama_gap_analysis_parent.csv")
+parent
+```
+
+## Child Table
+
+```{r}
+child <- bind_rows(
+  kgrag_p_variable$child,
+  kgrag_a_variable$child,
+  kgrag_t_variable$child,
+  llm_p_variable$child,
+  llm_a_variable$child,
+  llm_t_variable$child,
+  rag_p_variable$child,
+  rag_a_variable$child,
+  rag_t_variable$child
+) %>%
+  group_by(to) %>%
+  summarise(
+    total_tp = sum(TP),
+    total_fp = sum(FP),
+    total_fn = sum(FN),
+    tpr = round(sum(TP) / (sum(TP) + sum(FN)), 3),
+    fdr = round(sum(FP) / (sum(TP) + sum(FP)), 3)
+  ) %>% 
+  mutate(
+    to = gsub("_", " ", to)
+  )
+
+write_csv(child, "results/llama_gap_analysis_child.csv")
+child
+```
+
+
+
+# Integration Sensitivity Analysis
+
+```{r}
+proto_direction_pref <- proto_df %>%
+  filter(to != "Sex", to != "Age", from != "PEG") %>%
+  transmute(Var1 = from, Var2 = to, direction)
+
+models <- c("mistral")
+systems <- c("llm", "rag", "kgrag")
+query_levels <- c("Plausibility", "Association", "Temporality")
+```
+
+```{r}
+systems_resolved <- c(llm = "llm", rag = "rag", kgrag = "kg_llm")
+queries_resolved <- c(Plausibility = "plausibility", Association = "association", Temporality = "temporality")
+
+llm_tiebreak_reference <- map_dfr(models, function(m) {
+  map_dfr(systems, function(sys) {
+    map_dfr(query_levels, function(q) {
+      path <- file.path("data", m, "directional_resolved_with_proto_and_causal_lit",
+                         paste0(systems_resolved[sys], "_", queries_resolved[q], "_with_proto_resolved.csv"))
+      df <- read_csv(path, show_col_types = FALSE) %>% select(Var1, Var2)
+      s <- score_edges(df)
+      tibble(model = m, system = sys, query = q, f1 = s$f1, tpr = s$tpr, fdr = s$fdr,
+             hd = s$hd, shd = s$shd, n_edges = s$n_edges)
+    })
+  })
+})
+
+# write_csv(llm_tiebreak_reference, "results/llm_tiebreak_reference.csv")
+llm_tiebreak_reference
+```
+
+## Proto-model strength threshold sweep
+
+```{r}
+thresholds <- sort(unique(c(seq(0.1, 0.9, by = 0.05), 0.538)))
+
+ablation_threshold <- map_dfr(models, function(m) {
+  map_dfr(systems, function(sys) {
+    map_dfr(query_levels, function(q) {
+      src <- ks_vote_edges(m, sys, q)
+      map_dfr(thresholds, function(t) {
+        proto_t <- proto_at_threshold(t)
+        res <- fuse_sources(list(proto_t, src), min_sources = 1, tiebreak = "proto")
+        bind_cols(tibble(model = m, system = sys, query = q, threshold = t), score_edges(res))
+      })
+    })
+  })
+})
+
+# write_csv(ablation_threshold, "results/ablation1_threshold_sweep.csv")
+ablation_threshold
+```
+
+```{r}
+llm_tiebreak_ref_A <- llm_tiebreak_reference %>%
+  mutate(query = factor(query, levels = query_levels),
+         model_lab = str_to_title(model),
+         system_lab = recode(system, llm = "LLM", rag = "RAG", kgrag = "KG-RAG"))
+
+p_threshold <- ablation_threshold %>%
+  mutate(query = factor(query, levels = query_levels),
+         model_lab = str_to_title(model),
+         system_lab = recode(system, llm = "LLM", rag = "RAG", kgrag = "KG-RAG")) %>%
+  ggplot(aes(x = threshold, y = f1, color = system_lab)) +
+  geom_line(linewidth = 1) +
+  geom_hline(data = llm_tiebreak_ref_A, aes(yintercept = f1, color = system_lab),
+             linetype = "dotted", linewidth = 0.8) +
+  geom_vline(xintercept = 0.538, linetype = "dashed", color = "grey40") +
+  facet_grid(. ~ query) +
+  scale_color_manual(values = c("LLM" = "#F8666D", "RAG" = "#619eFF", "KG-RAG" = "#01cb88")) +
+  coord_cartesian(ylim = c(0, 0.8)) +
+  labs(
+       x = "Proto-model strength threshold", y = "F1", color = "Knowledge system") +
+  theme_classic(base_size = 11) +
+  theme(legend.position = "bottom", strip.background = element_rect(fill = "grey90"))
+
+p_threshold
+```
+
+## Integration rule: union vs. intersection
+
+```{r}
+proto_opt <- proto_at_threshold(0.538)
+
+ablation_rule <- map_dfr(models, function(m) {
+  map_dfr(systems, function(sys) {
+    map_dfr(query_levels, function(q) {
+      src <- ks_vote_edges(m, sys, q)
+      map_dfr(1:2, function(ms) {
+        map_dfr(c("proto", "drop"), function(tb) {
+          res <- fuse_sources(list(proto_opt, src), min_sources = ms, tiebreak = tb)
+          rule <- if (ms == 1) "union" else "intersection"
+          bind_cols(tibble(model = m, system = sys, query = q, rule = rule, tiebreak = tb),
+                     score_edges(res))
+        })
+      })
+    })
+  })
+})
+
+ablation_rule
+```
+
+```{r}
+rule_bars <- ablation_rule %>%
+  filter(tiebreak == "proto") %>%
+  mutate(rule = if_else(rule == "union", "Union", "Intersection"))
+
+rule_bars_with_ref <- bind_rows(
+  rule_bars %>% select(model, system, query, rule, f1),
+  llm_tiebreak_reference %>% mutate(rule = "LLM tiebreak (real)") %>% select(model, system, query, rule, f1)
+) %>%
+  mutate(rule = factor(rule, levels = c("Intersection", "Union", "LLM tiebreak (real)")),
+         query = factor(query, levels = query_levels),
+         model_lab = str_to_title(model),
+         system_lab = recode(system, llm = "LLM", rag = "RAG", kgrag = "KG-RAG"))
+
+p_rule <- ggplot(rule_bars_with_ref, aes(x = system_lab, y = f1, fill = rule)) +
+  geom_col(position = position_dodge(width = 0.75), width = 0.7) +
+  facet_grid(. ~ query) +
+  scale_fill_manual(values = c("Union" = "#619eFF", "Intersection" = "#F8666D",
+                                "LLM tiebreak (real)" = "grey30")) +
+  labs(
+       x = NULL, y = "F1", fill = NULL) +
+  theme_classic(base_size = 11) +
+  theme(legend.position = "bottom", strip.background = element_rect(fill = "grey90"),
+        axis.text.x = element_text(angle = 30, hjust = 1))
+
+p_rule
+```
+
+## Number of knowledge systems fused simultaneously (vote threshold)
+
+```{r}
+ablation_multi_ks <- map_dfr(models, function(m) {
+  map_dfr(query_levels, function(q) {
+    srcs <- setNames(map(systems, ~ ks_vote_edges(m, .x, q)), systems)
+    all_sources <- c(list(proto = proto_opt), srcs)
+    n_total <- length(all_sources)
+    map_dfr(1:n_total, function(ms) {
+      res <- fuse_sources(all_sources, min_sources = ms, tiebreak = "proto")
+      bind_cols(tibble(model = m, query = q, min_sources = ms, n_sources_total = n_total,
+                        sources = "Proto + LLM + RAG + KG-RAG"), score_edges(res))
+    })
+  })
+})
+
+# Companion: knowledge systems only (no proto), to isolate proto's marginal contribution
+ablation_multi_ks_no_proto <- map_dfr(models, function(m) {
+  map_dfr(query_levels, function(q) {
+    srcs <- setNames(map(systems, ~ ks_vote_edges(m, .x, q)), systems)
+    n_total <- length(srcs)
+    map_dfr(1:n_total, function(ms) {
+      res <- fuse_sources(srcs, min_sources = ms, tiebreak = "proto")
+      bind_cols(tibble(model = m, query = q, min_sources = ms, n_sources_total = n_total,
+                        sources = "LLM + RAG + KG-RAG (no proto)"), score_edges(res))
+    })
+  })
+})
+
+ablation_multi_ks_all <- bind_rows(ablation_multi_ks, ablation_multi_ks_no_proto)
+ablation_multi_ks_all
+```
+
+```{r}
+llm_tiebreak_ref_C <- llm_tiebreak_reference %>%
+  mutate(query = factor(query, levels = query_levels), model_lab = str_to_title(model),
+         system_lab = recode(system, llm = "LLM", rag = "RAG", kgrag = "KG-RAG"))
+
+p_multi_ks <- ablation_multi_ks_all %>%
+  mutate(query = factor(query, levels = query_levels), model_lab = str_to_title(model)) %>%
+  ggplot(aes(x = min_sources, y = f1, color = sources)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1.8) +
+  geom_hline(data = llm_tiebreak_ref_C, aes(yintercept = f1, linetype = system_lab),
+             color = "grey30", linewidth = 0.6) +
+  facet_grid(. ~ query) +
+  scale_x_continuous(breaks = 1:4) +
+  scale_color_manual(values = c("Proto + LLM + RAG + KG-RAG" = "#8E44AD",
+                                 "LLM + RAG + KG-RAG (no proto)" = "#F39C12")) +
+  scale_linetype_manual(values = c("LLM" = "dotted", "RAG" = "dashed", "KG-RAG" = "twodash")) +
+  labs(
+       x = "Minimum number of sources that must agree", y = "F1", color = NULL,
+       linetype = "LLM tiebreak\n(single system + proto)") +
+  theme_classic(base_size = 11) +
+  theme(legend.position = "bottom", strip.background = element_rect(fill = "grey90"))+
+  guides(color = guide_legend(nrow = 2, byrow = TRUE),
+        linetype = guide_legend(nrow = 2, byrow = TRUE))
+
+p_multi_ks
+```
+
+## Weighted-strength integration
+
+```{r}
+proto_w <- proto_weight_edges()
+
+sweep_tau <- function(weight_dfs, n = 40, tiebreak = "proto") {
+  max_w <- sum(map_dbl(weight_dfs, ~ max(.x$weight, na.rm = TRUE)))
+  taus <- seq(0.02, 0.98, length.out = n) * max_w
+  map_dfr(taus, function(t) {
+    res <- fuse_weighted(weight_dfs, tau = t, tiebreak = tiebreak)
+    bind_cols(tibble(tau = t, tau_frac = t / max_w), score_edges(res))
+  })
+}
+
+ablation_weighted <- map_dfr(models, function(m) {
+  map_dfr(systems, function(sys) {
+    map_dfr(query_levels, function(q) {
+      map_dfr(c("equal", "oracle"), function(scheme) {
+        w_val <- if (scheme == "equal") 1 else ks_oracle_precision(m, sys, q)
+        ks_w <- ks_weight_edges(m, sys, q, weight_val = w_val)
+        res <- sweep_tau(list(proto_w, ks_w))
+        res %>% mutate(model = m, system = sys, query = q, scheme = scheme, ks_weight = w_val)
+      })
+    })
+  })
+})
+
+ablation_weighted
+```
+
+```{r}
+p_weighted_sweep <- ablation_weighted %>%
+  filter(scheme == "equal") %>%
+  mutate(query = factor(query, levels = query_levels), model_lab = str_to_title(model),
+         system_lab = recode(system, llm = "LLM", rag = "RAG", kgrag = "KG-RAG")) %>%
+  ggplot(aes(x = tau_frac, y = f1, color = system_lab)) +
+  geom_line(linewidth = 1) +
+  geom_hline(data = llm_tiebreak_ref_A, aes(yintercept = f1, color = system_lab),
+             linetype = "dotted", linewidth = 0.8) +
+  facet_grid(. ~ query) +
+  scale_color_manual(values = c("LLM" = "#F8666D", "RAG" = "#619eFF", "KG-RAG" = "#01cb88")) +
+  coord_cartesian(ylim = c(0, 0.8)) +
+  labs(
+       x = "tau (fraction of max combinable weight)", y = "F1", color = "Knowledge system") +
+  theme_classic(base_size = 11) +
+  theme(legend.position = "bottom", strip.background = element_rect(fill = "grey90"))
+
+p_weighted_sweep
+```
+
+```{r}
+best_weighted <- ablation_weighted %>%
+  group_by(model, system, query, scheme) %>%
+  slice_max(f1, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  transmute(model = str_to_title(model), system = recode(system, llm = "LLM", rag = "RAG", kgrag = "KG-RAG"),
+            query = factor(query, levels = query_levels),
+            schema = paste0("Weighted (", scheme, ", best tau)"), f1)
+
+binary_ref <- ablation_rule %>%
+  filter(tiebreak == "proto") %>%
+  mutate(model = str_to_title(model), system = recode(system, llm = "LLM", rag = "RAG", kgrag = "KG-RAG"),
+         query = factor(query, levels = query_levels),
+         schema = if_else(rule == "union", "Binary union", "Binary intersection")) %>%
+  select(model, system, query, schema, f1)
+
+llm_tiebreak_ref_E <- llm_tiebreak_reference %>%
+  mutate(model = str_to_title(model), system = recode(system, llm = "LLM", rag = "RAG", kgrag = "KG-RAG"),
+         query = factor(query, levels = query_levels), schema = "LLM tiebreak (real)") %>%
+  select(model, system, query, schema, f1)
+
+p_schema_comparison_dat <- bind_rows(best_weighted, binary_ref, llm_tiebreak_ref_E) %>%
+  mutate(schema = factor(schema, levels = c("Binary intersection", "Binary union",
+                                             "Weighted (equal, best tau)", "Weighted (oracle, best tau)",
+                                             "LLM tiebreak (real)")))
+
+p_schema_comparison <- ggplot(p_schema_comparison_dat, aes(x = system, y = f1, fill = schema)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.75) +
+  facet_grid(. ~ query) +
+  scale_fill_manual(values = c("Binary intersection" = "#F8666D", "Binary union" = "#619eFF",
+                                "Weighted (equal, best tau)" = "#01cb88", "Weighted (oracle, best tau)" = "#8E44AD",
+                                "LLM tiebreak (real)" = "grey30")) +
+  labs(
+       x = NULL, y = "F1", fill = NULL) +
+  theme_classic(base_size = 11) +
+  theme(legend.position = "bottom", strip.background = element_rect(fill = "grey90"),
+        axis.text.x = element_text(angle = 30, hjust = 1))+
+          guides(fill = guide_legend(nrow = 2, byrow = TRUE))
+
+p_schema_comparison
+```
+
+## Sensitivity analysis figure
+
+```{r}
+sens_figure_layout<-c(
+  area(1,1), area(1,2), area(1,3),
+  area(2,1), area(2,2,2,3)
+)
+p_threshold+p_rule+p_multi_ks+p_weighted_sweep+p_schema_comparison+plot_layout(design = sens_figure_layout)+plot_annotation(tag_levels = "a")
+
+ggsave("results/figures/sens_figure.png", width = 16, height =10)
+```
+
+# Llama sensitivity analysis
+
+```{r}
+backbone_models <- c("llama", "mistral")
+
+systems_resolved <- c(llm = "llm", rag = "rag", kgrag = "kg_llm")
+system_names <- c(llm = "LLM", rag = "RAG", kgrag = "KG-RAG")
+queries_resolved <- c(Plausibility = "plausibility", Association = "association", Temporality = "temporality")
+
+# Table 2 equivalent: unresolved (prior to resolving bidirectional edges)
+llama_table2 <- map_dfr(backbone_models, function(m) {
+  map_dfr(systems, function(sys) {
+    df <- get_ks(m, sys)
+    map_dfr(query_levels, function(q) {
+      filtered <- df %>% filter(.data[[q]] == TRUE) %>% select(Var1, Var2)
+      s <- score_edges(filtered)
+      tibble(model = m, system = system_names[sys], query = q, tpr = s$tpr, fdr = s$fdr,
+             f1 = s$f1, hd = s$hd, shd = s$shd, n_edges = s$n_edges)
+    })
+  })
+})
+llama_table2
+```
+
+```{r}
+# Table 3 equivalent: resolved (genuine LLM tiebreaker), no proto
+llama_table3 <- map_dfr(backbone_models, function(m) {
+  map_dfr(systems, function(sys) {
+    map_dfr(query_levels, function(q) {
+      path <- file.path("data", m, "directional_resolved_without_proto",
+                         paste0(systems_resolved[sys], "_", queries_resolved[q], "_without_proto_resolved.csv"))
+      df <- read_csv(path, show_col_types = FALSE) %>% select(Var1, Var2)
+      s <- score_edges(df)
+      tibble(model = m, system = system_names[sys], query = q, tpr = s$tpr, fdr = s$fdr,
+             f1 = s$f1, hd = s$hd, shd = s$shd, n_edges = s$n_edges)
+    })
+  })
+})
+
+# write_csv(llama_table3, "results/llama_sensitivity_table3_resolved.csv")
+llama_table3
+```
+
+```{r}
+# Table 5 equivalent: resolved + proto @ 0.538 (genuine LLM tiebreaker)
+score_proto_opt <- score_edges(proto_opt %>% select(Var1, Var2))
+
+llama_table5 <- map_dfr(backbone_models, function(m) {
+  map_dfr(systems, function(sys) {
+    map_dfr(query_levels, function(q) {
+      path_wp <- file.path("data", m, "directional_resolved_with_proto_and_causal_lit",
+                            paste0(systems_resolved[sys], "_", queries_resolved[q], "_with_proto_resolved.csv"))
+      df_wp <- read_csv(path_wp, show_col_types = FALSE) %>% select(Var1, Var2)
+      s_wp <- score_edges(df_wp)
+
+      ks_alone <- llama_table3 %>% filter(model == m, system == system_names[sys], query == q)
+
+      tibble(model = m, system = system_names[sys], query = q,
+             tpr = s_wp$tpr, fdr = s_wp$fdr, f1 = s_wp$f1,
+             delta_f1_p = s_wp$f1 - score_proto_opt$f1,
+             delta_f1_ks = s_wp$f1 - ks_alone$f1,
+             hd = s_wp$hd, shd = s_wp$shd, n_edges = s_wp$n_edges)
+    })
+  })
+})
+
+# write_csv(llama_table5, "results/llama_sensitivity_table5_with_proto.csv")
+llama_table5
+```
+
+```{r}
+# Backbone agreement summary
+backbone_agreement <- llama_table5 %>% select(model, system, query, f1) %>%
+  pivot_wider(names_from = model, values_from = f1) %>%
+  mutate(delta = llama - mistral)
+
+cat("Proto model (shared, backbone-independent): F1 =", round(score_proto_opt$f1, 3), "\n")
+cat("Mean |Llama - Mistral| F1 (Table 5 config):", round(mean(abs(backbone_agreement$delta)), 4), "\n")
+cat("Max |Llama - Mistral| F1:", round(max(abs(backbone_agreement$delta)), 4), "at",
+    backbone_agreement$system[which.max(abs(backbone_agreement$delta))],
+    backbone_agreement$query[which.max(abs(backbone_agreement$delta))], "\n")
+
+backbone_agreement
+```
+
+```{r}
+# Best system per query type, by backbone (Table 5 config)
+llama_table5 %>%
+  group_by(model, query) %>%
+  slice_max(f1, n = 1, with_ties = TRUE) %>%
+  ungroup() %>%
+  select(model, query, system, f1)
+```
+
+## Backbone comparison figure
+
+```{r}
+p_backbone <- llama_table5 %>%
+  mutate(model_lab = str_to_title(model),
+         query = factor(query, levels = query_levels)) %>%
+  ggplot(aes(x = system, y = f1, fill = model_lab)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
+  facet_wrap(~ query, nrow = 1) +
+  scale_fill_manual(values = c("Llama" = "#F39C12", "Mistral" = "#619eFF")) +
+  labs(title = "Backbone sensitivity: proto-model + knowledge system (genuine LLM tiebreaker, threshold=0.538)",
+       x = NULL, y = "F1", fill = "Backbone") +
+  theme_classic(base_size = 12) +
+  theme(legend.position = "bottom", strip.background = element_rect(fill = "grey90"))
+
+p_backbone
+ggsave("results/figures/llama_sensitivity_table5_comparison.png", p_backbone, width = 10, height = 5, dpi = 150)
+```
+
+# Robustness to Alternative Expert Graphs
+
+## Perturbation setup
+
+```{r}
+eligible_pairs <- proto_df %>%
+  filter(to != "Sex", to != "Age", from != "PEG") %>%
+  transmute(Var1 = from, Var2 = to)
+
+cat("Eligible candidate directed pairs:", nrow(eligible_pairs), "\n")
+cat("Real expert graph edges (within eligible universe):",
+    expert_edges %>% semi_join(eligible_pairs, by = c("Var1", "Var2")) %>% nrow(),
+    "of", nrow(expert_edges), "\n")
+```
+
+## Representative configurations
+
+Five configurations spanning both backbones and all three query types, read directly from
+the genuine LLM-tiebreak resolved files used above.
+
+```{r}
+read_resolved <- function(model, sys_prefix, query) {
+  path <- file.path("data", model, "directional_resolved_with_proto_and_causal_lit",
+                     paste0(sys_prefix, "_", query, "_with_proto_resolved.csv"))
+  read_csv(path, show_col_types = FALSE) %>% select(Var1, Var2)
+}
+
+configs <- tibble::tribble(
+  ~label,                          ~model,    ~sys_prefix, ~query,
+  "Mistral KG-RAG Plausibility",   "mistral", "kg_llm",    "plausibility",
+  "Mistral RAG Association",       "mistral", "rag",       "association",
+  "Mistral RAG Temporality",       "mistral", "rag",       "temporality",
+  "Mistral LLM Plausibility",      "mistral", "llm",       "plausibility",
+  "Llama RAG Plausibility",        "llama",   "rag",       "plausibility",
+)
+
+config_edges <- configs %>%
+  mutate(edges = pmap(list(model, sys_prefix, query), read_resolved))
+```
+
+## Perturbation and rescoring
+
+At each perturbation level `p`, every eligible candidate pair independently has its
+presence in the expert graph flipped with probability `p` (present -> absent, absent ->
+present), generating an alternative expert graph of similar size to the real one but
+differing in a controlled number of edges. 200 replicate graphs are generated per level.
+
+```{r}
+set.seed(2026)
+
+perturb_expert_graph <- function(expert_edges, eligible_pairs, p) {
+  real_set <- expert_edges %>% mutate(present = TRUE)
+  full <- eligible_pairs %>%
+    left_join(real_set, by = c("Var1", "Var2")) %>%
+    mutate(present = replace_na(present, FALSE),
+           flip = runif(n()) < p,
+           present_alt = xor(present, flip))
+  full %>% filter(present_alt) %>% select(Var1, Var2)
+}
+
+real_set_key <- expert_edges %>% semi_join(eligible_pairs, by = c("Var1", "Var2")) %>%
+  mutate(key = paste(Var1, Var2)) %>% pull(key)
+
+p_values <- c(0.02, 0.05, 0.10, 0.15, 0.20)
+n_replicates <- 200
+
+expert_graph_robustness <- map_dfr(p_values, function(p) {
+  map_dfr(1:n_replicates, function(rep) {
+    alt_graph <- perturb_expert_graph(expert_edges, eligible_pairs, p)
+    alt_key <- paste(alt_graph$Var1, alt_graph$Var2)
+    n_flipped <- length(union(setdiff(real_set_key, alt_key), setdiff(alt_key, real_set_key)))
+
+    proto_score <- score(alt_graph, proto_opt %>% select(Var1, Var2), node_names)
+
+    config_scores <- config_edges %>%
+      mutate(f1 = map_dbl(edges, ~ score(alt_graph, .x, node_names)$f1))
+
+    tibble(
+      p = p, rep = rep, n_flipped = n_flipped,
+      proto_f1 = proto_score$f1,
+      config_scores %>% select(label, f1) %>% pivot_wider(names_from = label, values_from = f1)
+    )
+  })
+})
+
+write_csv(expert_graph_robustness, "results/expert_graph_robustness.csv")
+expert_graph_robustness
+```
+
+## Summary
+
+```{r}
+cat("Mean edges flipped relative to the real 64-edge graph, by perturbation level:\n")
+expert_graph_robustness %>% group_by(p) %>%
+  summarise(mean_n_flipped = mean(n_flipped), .groups = "drop") %>% print()
+
+cat("\nProto-model F1 under perturbation:\n")
+expert_graph_robustness %>% group_by(p) %>%
+  summarise(mean_f1 = mean(proto_f1), sd_f1 = sd(proto_f1), .groups = "drop") %>% print()
+
+cat("\nKACD configuration F1 under perturbation:\n")
+long_results <- expert_graph_robustness %>%
+  select(p, rep, all_of(configs$label)) %>%
+  pivot_longer(-c(p, rep), names_to = "config", values_to = "f1")
+
+long_results %>% group_by(config, p) %>%
+  summarise(mean_f1 = mean(f1), sd_f1 = sd(f1), .groups = "drop") %>%
+  arrange(config, p) %>% print(n = 30)
+```
+
+## Does the ranking survive perturbation?
+
+```{r}
+kg_vs_llm <- expert_graph_robustness %>%
+  transmute(p, rep, kgrag_wins = `Mistral KG-RAG Plausibility` > `Mistral LLM Plausibility`)
+
+cat("Does KG-RAG still outperform LLM under Plausibility (Mistral)?\n")
+kg_vs_llm %>% group_by(p) %>% summarise(pct_kgrag_wins = mean(kgrag_wins), .groups = "drop") %>% print()
+
+delta_check <- expert_graph_robustness %>%
+  mutate(across(all_of(configs$label), ~ . - proto_f1, .names = "delta_{.col}")) %>%
+  select(p, rep, starts_with("delta_")) %>%
+  pivot_longer(-c(p, rep), names_to = "config", values_to = "delta")
+
+cat("\nDoes fusing proto with a knowledge system still beat proto alone (delta_f1 > 0)?\n")
+delta_check %>% group_by(config, p) %>%
+  summarise(pct_positive = mean(delta > 0), mean_delta = mean(delta), .groups = "drop") %>%
+  arrange(config, p) %>% print(n = 30)
+```
+
+## Figures
+
+```{r}
+p_robustness_f1 <- long_results %>%
+  bind_rows(expert_graph_robustness %>% transmute(p, rep, config = "Proto model alone", f1 = proto_f1)) %>%
+  mutate(config = factor(config, levels = c("Proto model alone", configs$label))) %>%
+  ggplot(aes(x = factor(p), y = f1, fill = config)) +
+  geom_boxplot(outlier.size = 0.5, position = position_dodge(width = 0.8)) +
+  labs(title = "Robustness to alternative expert graphs",
+       subtitle = "F1 across 200 perturbed expert graphs per perturbation level (fraction of candidate edges independently toggled)",
+       x = "Perturbation level (p)", y = "F1", fill = NULL) +
+  theme_classic(base_size = 11) +
+  theme(legend.position = "bottom")
+
+p_robustness_f1
+ggsave("results/figures/expert_graph_robustness.png", p_robustness_f1, width = 10, height = 6, dpi = 150)
+```
+
+```{r}
+p_robustness_pct <- bind_rows(
+  kg_vs_llm %>% group_by(p) %>% summarise(pct = mean(kgrag_wins), .groups = "drop") %>%
+    mutate(check = "KG-RAG > LLM (Plausibility, Mistral)"),
+  delta_check %>% group_by(p) %>% summarise(pct = mean(delta > 0), .groups = "drop") %>%
+    mutate(check = "Proto + KS > Proto alone (all configs)")
+) %>%
+  ggplot(aes(x = p, y = pct, color = check)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  scale_y_continuous(limits = c(0, 1), labels = scales::percent) +
+  labs(title = "Stability of qualitative findings under expert-graph perturbation",
+       x = "Perturbation level (p)", y = "% of replicates preserving the finding", color = NULL) +
+  theme_classic(base_size = 11) +
+  theme(legend.position = "bottom")
+
+p_robustness_pct
+ggsave("results/figures/expert_graph_robustness_stability.png", p_robustness_pct, width = 9, height = 5.5, dpi = 150)
+```

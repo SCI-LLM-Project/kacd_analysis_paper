@@ -1,0 +1,13 @@
+to,total_tp,total_fp,total_fn,tpr,fdr
+Alcohol,26,23,19,0.578,0.469
+Anxiety,42,24,21,0.667,0.364
+CCI,40,16,32,0.556,0.286
+Catastrophizing,7,32,11,0.389,0.821
+Depression,34,12,38,0.472,0.261
+Education,4,14,5,0.444,0.778
+Fear avoidance,9,29,9,0.5,0.763
+Financial level,11,18,25,0.306,0.621
+Obesity,26,18,19,0.578,0.409
+PEG,68,12,31,0.687,0.15
+Sleep disturbance,26,36,19,0.578,0.581
+Smoking,20,6,34,0.37,0.231

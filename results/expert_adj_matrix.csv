@@ -1,0 +1,15 @@
+"","Age","Alcohol","Anxiety","Catastrophizing","Depression","Education","Fear_avoidance","Financial_level","Obesity","Sex","Sleep disturbance","Smoking","CCI","PEG"
+"Age",0,1,1,1,1,0,1,1,1,0,1,1,1,1
+"Alcohol",0,0,0,0,0,0,0,1,1,0,1,0,1,0
+"Anxiety",0,1,0,0,0,0,0,0,0,0,1,1,1,1
+"Catastrophizing",0,0,1,0,1,0,0,0,0,0,0,0,0,1
+"Depression",0,1,0,0,0,0,0,0,0,0,0,1,1,1
+"Education",0,1,1,0,1,0,0,1,1,0,0,1,1,1
+"Fear_avoidance",0,0,1,0,1,0,0,0,0,0,0,0,0,1
+"Financial_level",0,0,1,0,1,0,0,0,1,0,1,0,0,1
+"Obesity",0,0,1,0,1,0,0,0,0,0,0,0,1,1
+"Sex",0,1,1,1,1,1,1,1,1,0,1,1,1,1
+"Sleep disturbance",0,0,0,0,1,0,0,0,0,0,0,1,1,1
+"Smoking",0,0,0,0,0,0,0,0,0,0,0,0,0,1
+"CCI",0,0,0,0,0,0,0,0,0,0,0,0,0,0
+"PEG",0,0,0,0,0,0,0,0,0,0,0,0,0,0

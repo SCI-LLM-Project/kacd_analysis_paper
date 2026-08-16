@@ -1,0 +1,30 @@
+Var1,Var2,Votes
+Depression,PEG,8
+Alcohol,Sleep disturbance,8
+Education,Alcohol,7
+Age,Obesity,7
+Age,Sleep disturbance,7
+Anxiety,PEG,7
+Education,PEG,7
+Anxiety,Alcohol,7
+Catastrophizing,Anxiety,7
+Fear avoidance,Anxiety,7
+Obesity,Anxiety,7
+Depression,CCI,7
+Obesity,CCI,7
+Financial level,Depression,7
+Education,Smoking,7
+Education,Anxiety,6
+Sex,Anxiety,6
+Age,Alcohol,6
+Age,CCI,6
+Age,Fear avoidance,6
+Catastrophizing,PEG,6
+Fear avoidance,PEG,6
+Financial level,PEG,6
+Obesity,PEG,6
+Sleep disturbance,PEG,6
+Smoking,PEG,6
+Financial level,Sleep disturbance,6
+Alcohol,Obesity,6
+Education,Obesity,6
